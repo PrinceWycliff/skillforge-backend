@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const auth = require('../middleware/auth');
 
+
 // POST /api/quiz/submit
 router.post('/submit', auth, async (req, res) => {
   try {

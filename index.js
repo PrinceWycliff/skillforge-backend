@@ -64,16 +64,20 @@ app.post('/api/quiz/submit', (req, res) => {
   });
 });
 
-const adminRoutes = require('./routes/admin');
+// Line 67:
+const adminRoutes = require('./src/routes/admin');
 app.use('/api/admin', adminRoutes);
 
-const instructorRoutes = require('./routes/instructor');
+// Line 70:
+const instructorRoutes = require('./src/routes/instructor');
 app.use('/api/instructor', instructorRoutes);
 
-const authRoutes = require('./routes/auth');
+// Line 73:
+const authRoutes = require('./src/routes/auth');
 app.use('/api/auth', authRoutes);
 
-const certificateRoutes = require('./routes/certificates');
+// Line 76:
+const certificateRoutes = require('./src/routes/certificates');
 app.use('/api/certificates', certificateRoutes);
 
 app.listen(PORT, () => {

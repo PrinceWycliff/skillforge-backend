@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Progress = require('../models/Progress');
+const db = require('../config/db');
 const authMiddleware = require('../middleware/auth');
 
 // GET progress for a specific course

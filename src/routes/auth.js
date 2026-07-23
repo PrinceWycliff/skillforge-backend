@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+// Correct DB import in any route file inside src/routes/:
 const db = require('../config/db');
 const authMiddleware = require('../middleware/auth');
 
