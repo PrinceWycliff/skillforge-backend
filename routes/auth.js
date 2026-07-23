@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
+const db = require('../config/db');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'skillforge_super_secret_key_2026';
 

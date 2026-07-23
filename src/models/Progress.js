@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const db = require('../config/db');
 
 const ProgressSchema = new mongoose.Schema({
   userId: { type: String, required: true, index: true },
