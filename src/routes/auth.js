@@ -30,8 +30,8 @@ router.post('/register', async (req, res) => {
 
     const token = jwt.sign(
       { userId: user.id, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN }
+      process.env.JWT_SECRET || 'secretKey',
+      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
     );
 
     res.status(201).json({
@@ -63,8 +63,8 @@ router.post('/login', async (req, res) => {
 
     const token = jwt.sign(
       { userId: user.id, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN }
+      process.env.JWT_SECRET || 'secretKey',
+      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
     );
 
     res.json({
@@ -74,6 +74,54 @@ router.post('/login', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error during login.' });
+  }
+});
+
+// SYNC USER (Firebase Google Sign-In & Auth Sync)
+router.post('/sync-user', async (req, res) => {
+  const { idToken } = req.body;
+
+  if (!idToken) {
+    return res.status(400).json({ error: 'Missing ID token' });
+  }
+
+  try {
+    // Decode JWT payload token sent from frontend Firebase auth
+    const decodedToken = jwt.decode(idToken);
+    if (!decodedToken || !decodedToken.email) {
+      return res.status(400).json({ error: 'Invalid token payload' });
+    }
+
+    const email = decodedToken.email;
+    const fullName = decodedToken.name || email.split('@')[0];
+
+    // Check if user already exists in PostgreSQL DB
+    let result = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+    let user = result.rows[0];
+
+    if (!user) {
+      // Create user if signing in for the first time
+      const newUser = await db.query(
+        `INSERT INTO users (email, full_name, password_hash) 
+         VALUES ($1, $2, $3) 
+         RETURNING id, email, full_name, role`,
+        [email, fullName, 'firebase_oauth_account']
+      );
+      user = newUser.rows[0];
+    }
+
+    res.json({
+      message: 'User synchronized successfully',
+      user: {
+        id: user.id,
+        email: user.email,
+        fullName: user.full_name,
+        role: user.role
+      }
+    });
+  } catch (err) {
+    console.error('Error syncing user:', err);
+    res.status(500).json({ error: 'Internal server error during synchronization' });
   }
 });
 
