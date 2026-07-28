@@ -1,14 +1,11 @@
 const express = require('express');
 const cors = require('cors');
-const db = require('./src/config/db'); // Points to your db connection
+const db = require('./src/config/db');
 
 const app = express();
 
 // 1. CORS Setup
-// NOTE: app.use(cors(...)) already handles OPTIONS preflight for ALL routes.
-// The old `app.options('*', cors())` line has been removed — it crashed the
-// server on boot because modern path-to-regexp (used internally by Express's
-// router) no longer supports a bare '*' wildcard pattern.
+// Handles both regular cross-origin requests and preflight OPTIONS automatically
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -24,17 +21,19 @@ app.get('/', (req, res) => {
   res.json({ status: 'online', message: 'Skillforge Backend API is active!' });
 });
 
-// 4. Direct GET /api/courses
+// 4. GET /api/courses
 app.get('/api/courses', async (req, res) => {
   try {
     const result = await db.query('SELECT * FROM courses ORDER BY id DESC');
     res.json({ success: true, data: result.rows });
   } catch (err) {
+    console.error('GET /api/courses Error:', err);
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// 5. Direct POST /api/courses
+// 5. POST /api/courses
+// Includes ID auto-calculation to handle non-SERIAL primary keys safely
 app.post('/api/courses', async (req, res) => {
   try {
     const { title, description, category } = req.body;
@@ -44,8 +43,11 @@ app.post('/api/courses', async (req, res) => {
     }
 
     const query = `
-      INSERT INTO courses (title, description, category)
-      VALUES ($1, $2, $3)
+      INSERT INTO courses (id, title, description, category)
+      VALUES (
+        COALESCE((SELECT MAX(id) FROM courses), 0) + 1,
+        $1, $2, $3
+      )
       RETURNING *
     `;
     const values = [title, description || '', category || 'Web Development'];
@@ -62,6 +64,7 @@ app.post('/api/courses', async (req, res) => {
     res.status(500).json({ success: false, message: 'Database error: ' + err.message });
   }
 });
+
 // 6. Start Server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
