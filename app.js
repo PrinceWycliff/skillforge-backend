@@ -42,7 +42,6 @@ app.post('/api/courses', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Title is required.' });
     }
 
-    // Generate a unique string ID to match PostgreSQL TEXT/VARCHAR id type
     const generatedId = `course_${Date.now()}`;
 
     const query = `
@@ -61,14 +60,36 @@ app.post('/api/courses', async (req, res) => {
     });
   } catch (err) {
     console.error('Database Error:', err);
-    res.status(500).json({
-      success: false,
-      message: 'Database error: ' + err.message,
-    });
+    res.status(500).json({ success: false, message: 'Database error: ' + err.message });
   }
 });
 
-// 6. Start Server
+// 6. DELETE /api/courses/:id
+app.delete('/api/courses/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({ success: false, message: 'Course ID is required.' });
+    }
+
+    const result = await db.query('DELETE FROM courses WHERE id = $1 RETURNING *', [String(id)]);
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ success: false, message: 'Course not found in database.' });
+    }
+
+    res.json({
+      success: true,
+      message: 'Course deleted successfully!',
+      deletedCourse: result.rows[0],
+    });
+  } catch (err) {
+    console.error('DELETE /api/courses Error:', err);
+    res.status(500).json({ success: false, message: 'Database error: ' + err.message });
+  }
+});
+// 7. Start Server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 Skillforge Server running on port ${PORT}`);
