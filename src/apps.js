@@ -6,6 +6,8 @@ const connectMongoDB = require('./config/mongodb');
 const authRoutes = require('./routes/auth');
 const progressRoutes = require('./routes/progress');
 const instructorRoutes = require('./routes/instructor');
+const enrollmentRoutes = require('./routes/enrollments');
+app.use('/api/enrollments', enrollmentRoutes);
 
 const app = express();
 
