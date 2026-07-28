@@ -8,6 +8,10 @@ const progressRoutes = require('./routes/progress');
 const instructorRoutes = require('./routes/instructor');
 const enrollmentRoutes = require('./routes/enrollments');
 app.use('/api/enrollments', enrollmentRoutes);
+const courseRoutes = require('./routes/courses');
+
+// Mount routes
+app.use('/api/courses', courseRoutes);
 
 const app = express();
 
