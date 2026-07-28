@@ -3,26 +3,41 @@ const cors = require('cors');
 
 const app = express();
 
-// Enable CORS for frontend requests (Vercel)
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+// 1. Configure CORS for cross-origin requests (Vercel -> Render)
+app.use(
+  cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  })
+);
 
+// Explicitly handle CORS preflight OPTIONS requests
+app.options('*', cors());
+
+// 2. Middleware to parse incoming request bodies
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Health check root
+// 3. Root health check route
 app.get('/', (req, res) => {
-  res.json({ message: 'Skillforge Backend API is online!' });
+  res.json({
+    status: 'online',
+    message: 'Skillforge Backend API is running smoothly!',
+  });
 });
 
-// Import and mount courses router
+// 4. Import and mount course routes (Relative to src/)
 const courseRoutes = require('./routes/courses');
 app.use('/api/courses', courseRoutes);
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+// 5. Global fallback error handler
+app.use((err, req, res, next) => {
+  console.error('Unhandled Error:', err.stack);
+  res.status(500).json({
+    success: false,
+    message: 'Internal Server Error: ' + err.message,
+  });
+});
 
 module.exports = app;
