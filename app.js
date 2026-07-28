@@ -3,7 +3,7 @@ const cors = require('cors');
 
 const app = express();
 
-// 1. CORS Setup
+// 1. CORS Configuration
 app.use(
   cors({
     origin: '*',
@@ -14,23 +14,30 @@ app.use(
 
 app.options('*', cors());
 
-// 2. Middleware
+// 2. Body Parser Middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// 3. Health Check
+// 3. Root Health Check
 app.get('/', (req, res) => {
   res.json({
     status: 'online',
-    message: 'Skillforge Backend API is running smoothly!',
+    message: 'Skillforge Backend API is active!',
   });
 });
 
-// 4. Import routes pointing into src/
+// 4. Mount Courses Router at /api/courses
 const courseRoutes = require('./src/routes/courses');
 app.use('/api/courses', courseRoutes);
 
-// 5. Start Server
+// 5. Global 404 Fallback for Debugging
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: `Cannot ${req.method} ${req.originalUrl}`,
+  });
+});
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 Skillforge Server running on port ${PORT}`);
