@@ -1,43 +1,67 @@
 const express = require('express');
 const cors = require('cors');
+const db = require('./src/config/db'); // Points to your db connection
 
 const app = express();
 
-// 1. CORS Configuration
-app.use(
-  cors({
-    origin: '*',
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-  })
-);
+// 1. CORS Setup
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 
 app.options('*', cors());
 
-// 2. Body Parser Middleware
+// 2. Middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// 3. Root Health Check
+// 3. Health Check
 app.get('/', (req, res) => {
-  res.json({
-    status: 'online',
-    message: 'Skillforge Backend API is active!',
-  });
+  res.json({ status: 'online', message: 'Skillforge Backend API is active!' });
 });
 
-// 4. Mount Courses Router at /api/courses
-const courseRoutes = require('./src/routes/courses');
-app.use('/api/courses', courseRoutes);
-
-// 5. Global 404 Fallback for Debugging
-app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    message: `Cannot ${req.method} ${req.originalUrl}`,
-  });
+// 4. Direct GET /api/courses
+app.get('/api/courses', async (req, res) => {
+  try {
+    const result = await db.query('SELECT * FROM courses ORDER BY id DESC');
+    res.json({ success: true, data: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
 });
 
+// 5. Direct POST /api/courses (Fixes 404!)
+app.post('/api/courses', async (req, res) => {
+  try {
+    const { title, description, category, thumbnail } = req.body;
+
+    if (!title) {
+      return res.status(400).json({ success: false, message: 'Title is required.' });
+    }
+
+    const query = `
+      INSERT INTO courses (title, description, category, thumbnail)
+      VALUES ($1, $2, $3, $4)
+      RETURNING *
+    `;
+    const values = [title, description || '', category || 'Web Development', thumbnail || ''];
+
+    const result = await db.query(query, values);
+
+    res.status(201).json({
+      success: true,
+      message: 'Course published successfully!',
+      data: result.rows[0]
+    });
+  } catch (err) {
+    console.error('Database Error:', err);
+    res.status(500).json({ success: false, message: 'Database error: ' + err.message });
+  }
+});
+
+// 6. Start Server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 Skillforge Server running on port ${PORT}`);
