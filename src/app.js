@@ -3,7 +3,7 @@ const cors = require('cors');
 
 const app = express();
 
-// 1. Configure CORS for cross-origin requests (Vercel -> Render)
+// 1. CORS Setup
 app.use(
   cors({
     origin: '*',
@@ -12,14 +12,13 @@ app.use(
   })
 );
 
-// Explicitly handle CORS preflight OPTIONS requests
 app.options('*', cors());
 
-// 2. Middleware to parse incoming request bodies
+// 2. Body Parser Middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// 3. Root health check route
+// 3. Health Check
 app.get('/', (req, res) => {
   res.json({
     status: 'online',
@@ -27,17 +26,14 @@ app.get('/', (req, res) => {
   });
 });
 
-// 4. Import and mount course routes (Relative to src/)
+// 4. Mount Courses Route (relative to src/)
 const courseRoutes = require('./routes/courses');
 app.use('/api/courses', courseRoutes);
 
-// 5. Global fallback error handler
-app.use((err, req, res, next) => {
-  console.error('Unhandled Error:', err.stack);
-  res.status(500).json({
-    success: false,
-    message: 'Internal Server Error: ' + err.message,
-  });
+// 5. Port Listener
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`🚀 Skillforge Server running on port ${PORT}`);
 });
 
 module.exports = app;
