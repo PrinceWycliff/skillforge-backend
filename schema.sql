@@ -27,7 +27,22 @@ CREATE TABLE IF NOT EXISTS user_focus_areas (
 );
 
 
--- 4. Enrollments Table
+-- 4. Courses Table (Instructor Studio published courses)
+CREATE TABLE IF NOT EXISTS courses (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    category VARCHAR(100) DEFAULT 'Web Development',
+    thumbnail TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Index for listing courses newest-first (matches ORDER BY id DESC in app.js)
+CREATE INDEX IF NOT EXISTS idx_courses_created_at ON courses(created_at);
+
+
+-- 5. Enrollments Table
 CREATE TABLE IF NOT EXISTS enrollments (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
@@ -41,7 +56,7 @@ CREATE TABLE IF NOT EXISTS enrollments (
 CREATE INDEX IF NOT EXISTS idx_enrollments_user ON enrollments(user_id);
 
 
--- 5. Certificates Table (Automated Certification Pipeline)
+-- 6. Certificates Table (Automated Certification Pipeline)
 CREATE TABLE IF NOT EXISTS certificates (
     certificate_id VARCHAR(50) PRIMARY KEY, -- e.g., SF-2026-88421-NC
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
