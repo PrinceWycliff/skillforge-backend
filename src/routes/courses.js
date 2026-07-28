@@ -2,44 +2,39 @@ const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
 
-// GET /api/courses
+// GET /api/courses (Notice it's '/' NOT '/api/courses')
 router.get('/', async (req, res) => {
   try {
-    const result = await db.query('SELECT * FROM courses ORDER BY created_at DESC');
-    res.json(result.rows);
+    const { rows } = await db.query('SELECT * FROM courses ORDER BY created_at DESC');
+    res.json(rows);
   } catch (err) {
     console.error('Error fetching courses:', err);
-    res.status(500).json({ message: 'Server error retrieving courses.' });
+    res.status(500).json({ message: 'Database error retrieving courses.' });
   }
 });
 
-// POST /api/courses
+// POST /api/courses (Notice it's '/' NOT '/api/courses')
 router.post('/', async (req, res) => {
-  const { title, description, category, thumbnail, lessons, quiz } = req.body;
+  const { title, description, category, thumbnail } = req.body;
 
   if (!title || !description) {
     return res.status(400).json({ message: 'Title and description are required.' });
   }
 
   try {
-    // Stringify complex arrays if storing in standard TEXT or JSONB columns
-    const lessonsJson = JSON.stringify(lessons || []);
-    const quizJson = JSON.stringify(quiz || []);
-
-    const newCourse = await db.query(
+    const result = await db.query(
       `INSERT INTO courses (title, description, category, thumbnail, created_at)
-       VALUES ($1, $2, $3, $4, NOW())
-       RETURNING *`,
+       VALUES ($1, $2, $3, $4, NOW()) RETURNING *`,
       [title, description, category || 'General', thumbnail || '']
     );
 
     res.status(201).json({
       message: 'Course published successfully!',
-      course: newCourse.rows[0],
+      course: result.rows[0],
     });
   } catch (err) {
-    console.error('Error creating course in DB:', err);
-    res.status(500).json({ message: 'Database error creating course.', error: err.message });
+    console.error('DB Error creating course:', err);
+    res.status(500).json({ message: 'DB Error: ' + err.message });
   }
 });
 
