@@ -14,7 +14,7 @@ app.use(
 
 app.options('*', cors());
 
-// 2. Body Parser Middleware
+// 2. Middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -26,11 +26,11 @@ app.get('/', (req, res) => {
   });
 });
 
-// 4. Mount Courses Route (relative to src/)
-const courseRoutes = require('./routes/courses');
+// 4. Import routes pointing into src/
+const courseRoutes = require('./src/routes/courses');
 app.use('/api/courses', courseRoutes);
 
-// 5. Port Listener
+// 5. Start Server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 Skillforge Server running on port ${PORT}`);
