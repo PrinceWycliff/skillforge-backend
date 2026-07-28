@@ -2,13 +2,7 @@ const express = require('express');
 const router = express.Router();
 const auth = require('../../middleware/auth');
 const db = require('../config/db');
-const express = require('express');
-const cors = require('cors'); // <--- 1. Import cors
 
-const app = express();
-
-app.use(cors()); // <--- 2. Enable CORS middleware (before route definitions)
-app.use(express.json());
 
 // POST /api/quiz/submit
 router.post('/submit', auth, async (req, res) => {
