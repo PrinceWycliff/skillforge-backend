@@ -5,13 +5,15 @@ const db = require('./src/config/db'); // Points to your db connection
 const app = express();
 
 // 1. CORS Setup
+// NOTE: app.use(cors(...)) already handles OPTIONS preflight for ALL routes.
+// The old `app.options('*', cors())` line has been removed — it crashed the
+// server on boot because modern path-to-regexp (used internally by Express's
+// router) no longer supports a bare '*' wildcard pattern.
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
-
-app.options('*', cors());
 
 // 2. Middleware
 app.use(express.json({ limit: '10mb' }));
