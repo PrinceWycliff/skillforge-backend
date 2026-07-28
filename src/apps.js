@@ -1,57 +1,28 @@
 const express = require('express');
 const cors = require('cors');
-require('dotenv').config();
-
-const connectMongoDB = require('./config/mongodb');
-const authRoutes = require('./routes/auth');
-const progressRoutes = require('./routes/progress');
-const instructorRoutes = require('./routes/instructor');
-const enrollmentRoutes = require('./routes/enrollments');
-app.use('/api/enrollments', enrollmentRoutes);
-const courseRoutes = require('./routes/courses');
-
-// Mount routes
-app.use('/api/courses', courseRoutes);
-
 const app = express();
 
-// Initialize MongoDB Atlas Connection
-connectMongoDB();
-
-// Configure CORS for local dev and live Vercel frontend
-const allowedOrigins = [
-  'http://localhost:5173',
-  'http://localhost:3000',
-  'https://skillforge-frontend-one.vercel.app'
-];
-
+// 1. Enable CORS for all origins (or specifically Vercel)
 app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(null, true); // Fallback to allow connection during initial deployment
-    }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  origin: '*', // Allows requests from Vercel
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
+// 2. Enable JSON body parsing for course + quiz payloads
 app.use(express.json());
 
-// API Endpoints
-app.use('/api/auth', authRoutes);
-app.use('/api/progress', progressRoutes);
-app.use('/api/instructor', instructorRoutes);
-
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'Skillforge API operational (Postgres & MongoDB active)' });
+// 3. Optional: Add a root check route so '/' displays a health check
+app.get('/', (req, res) => {
+  res.json({ status: 'Skillforge API is live and operational!' });
 });
+
+// Import and mount your routes
+const courseRoutes = require('./routes/courses');
+const enrollmentRoutes = require('./routes/enrollments');
+
+app.use('/api/courses', courseRoutes);
+app.use('/api/enrollments', enrollmentRoutes);
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
