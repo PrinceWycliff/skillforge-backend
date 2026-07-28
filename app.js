@@ -34,21 +34,21 @@ app.get('/api/courses', async (req, res) => {
   }
 });
 
-// 5. Direct POST /api/courses (Fixes 404!)
+// 5. Direct POST /api/courses
 app.post('/api/courses', async (req, res) => {
   try {
-    const { title, description, category, thumbnail } = req.body;
+    const { title, description, category } = req.body;
 
     if (!title) {
       return res.status(400).json({ success: false, message: 'Title is required.' });
     }
 
     const query = `
-      INSERT INTO courses (title, description, category, thumbnail)
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO courses (title, description, category)
+      VALUES ($1, $2, $3)
       RETURNING *
     `;
-    const values = [title, description || '', category || 'Web Development', thumbnail || ''];
+    const values = [title, description || '', category || 'Web Development'];
 
     const result = await db.query(query, values);
 
@@ -62,7 +62,6 @@ app.post('/api/courses', async (req, res) => {
     res.status(500).json({ success: false, message: 'Database error: ' + err.message });
   }
 });
-
 // 6. Start Server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
