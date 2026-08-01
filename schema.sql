@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS courses (
     description TEXT,
     category VARCHAR(100) DEFAULT 'Web Development',
     thumbnail TEXT,
+    lessons JSONB DEFAULT '[]'::jsonb,  -- [{ title, videoUrl }, ...]
+    quiz JSONB DEFAULT '[]'::jsonb,     -- [{ question, options, correctAnswer }, ...]
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
