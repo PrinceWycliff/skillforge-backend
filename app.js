@@ -1,9 +1,12 @@
 const express = require('express');
 const cors = require('cors');
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 const db = require('./src/config/db');
 
 const app = express();
+
+// Initialize Resend with your API Key
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 // ==========================================
 // AUTOMATIC DATABASE MIGRATION
@@ -24,7 +27,7 @@ async function initDb() {
 
 initDb();
 
-// 1. Middleware Setup
+// Middleware
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -34,30 +37,16 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// 2. Configure Nodemailer Transporter (Port 587 / TLS for Render compatibility)
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false, // Must be false for port 587
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-  tls: {
-    rejectUnauthorized: false // Bypasses network/cert restrictions on cloud servers
-  }
-});
-
 // Health Check
 app.get('/', (req, res) => {
   res.json({ status: 'online', message: 'Skillforge Backend API is active!' });
 });
 
 // ==========================================
-// AUTHENTICATION & SMTP PASSWORD RESET
+// AUTHENTICATION & EMAIL PASSWORD RESET
 // ==========================================
 
-// POST /api/auth/forgot-password - Generate token & send email
+// POST /api/auth/forgot-password
 app.post(['/api/auth/forgot-password', '/api/forgot-password'], async (req, res) => {
   try {
     const { email } = req.body;
@@ -72,7 +61,7 @@ app.post(['/api/auth/forgot-password', '/api/forgot-password'], async (req, res)
     }
 
     const token = Math.random().toString(36).substring(2) + Date.now().toString(36);
-    const expires = new Date(Date.now() + 3600000); // Expiration: 1 hour
+    const expires = new Date(Date.now() + 3600000); // 1 hour expiration
 
     await db.query(
       'UPDATE users SET reset_password_token = $1, reset_password_expires = $2 WHERE email = $3',
@@ -81,15 +70,16 @@ app.post(['/api/auth/forgot-password', '/api/forgot-password'], async (req, res)
 
     const resetUrl = `https://skillforge-frontend-one.vercel.app/reset-password?token=${token}`;
 
-    const mailOptions = {
-      from: `"Skillforge Support" <${process.env.EMAIL_USER}>`,
+    // Send email via Resend HTTPS API
+    const response = await resend.emails.send({
+      from: 'Skillforge Support <onboarding@resend.dev>', // Resend default testing domain
       to: email,
       subject: 'Skillforge Account Password Reset',
       html: `
         <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; background-color: #f9f9f9;">
           <h2 style="color: #2563eb;">Password Reset Request</h2>
           <p>Hello,</p>
-          <p>We received a request to reset the password associated with your Skillforge account.</p>
+          <p>We received a request to reset the password for your Skillforge account.</p>
           <p>Click the button below to reset your password (valid for 1 hour):</p>
           <p style="margin: 25px 0;">
             <a href="${resetUrl}" style="background-color: #2563eb; color: #ffffff; padding: 12px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">
@@ -102,10 +92,13 @@ app.post(['/api/auth/forgot-password', '/api/forgot-password'], async (req, res)
           <p style="font-size: 12px; color: #777;">If you did not request a password reset, you can safely ignore this email.</p>
         </div>
       `,
-    };
+    });
 
-    await transporter.sendMail(mailOptions);
-    console.log(`📧 Reset email sent successfully to ${email}`);
+    if (response.error) {
+      throw new Error(response.error.message);
+    }
+
+    console.log(`📧 Reset email sent via Resend to ${email}`);
 
     res.json({
       success: true,
@@ -113,12 +106,12 @@ app.post(['/api/auth/forgot-password', '/api/forgot-password'], async (req, res)
     });
 
   } catch (err) {
-    console.error('SMTP Email Error:', err);
+    console.error('Email Dispatch Error:', err);
     res.status(500).json({ success: false, message: 'Failed to send email: ' + err.message });
   }
 });
 
-// POST /api/auth/reset-password - Verify token and update password
+// POST /api/auth/reset-password
 app.post(['/api/auth/reset-password', '/api/reset-password'], async (req, res) => {
   try {
     const { token, newPassword } = req.body;
@@ -173,7 +166,6 @@ app.get('/api/courses/:id', async (req, res) => {
 
     res.json(result.rows[0]);
   } catch (err) {
-    console.error('Fetch Course Error:', err);
     res.status(500).json({ message: 'Database error: ' + err.message });
   }
 });
@@ -208,7 +200,6 @@ app.post('/api/courses', async (req, res) => {
       data: result.rows[0],
     });
   } catch (err) {
-    console.error('Database Error:', err);
     res.status(500).json({ success: false, message: 'Database error: ' + err.message });
   }
 });
@@ -277,7 +268,7 @@ app.get('/api/admin/analytics', async (req, res) => {
   }
 });
 
-// 4. Start Server Listening
+// Start Server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 Skillforge Express Backend running on port ${PORT}`);
