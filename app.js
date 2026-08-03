@@ -9,8 +9,11 @@ const app = express();
 // BREVO EMAIL SERVICE CONFIGURATION
 // ==========================================
 const apiInstance = new Brevo.TransactionalEmailsApi();
+
 if (process.env.BREVO_API_KEY) {
-  apiInstance.setApiKey(Brevo.TransactionalEmailsApiApiKeys.apiKey, process.env.BREVO_API_KEY);
+  apiInstance.authentications['apiKey'].apiKey = process.env.BREVO_API_KEY;
+} else {
+  console.warn('⚠️ BREVO_API_KEY environment variable is missing.');
 }
 
 // ==========================================
@@ -130,7 +133,6 @@ app.post(['/api/auth/reset-password', '/api/reset-password'], async (req, res) =
       return res.status(400).json({ success: false, message: 'Invalid or expired password reset token.' });
     }
 
-    // Fixed column name to password_hash
     await db.query(
       'UPDATE users SET password_hash = $1, reset_password_token = NULL, reset_password_expires = NULL WHERE id = $2',
       [newPassword, userResult.rows[0].id]
