@@ -1,12 +1,17 @@
 const express = require('express');
 const cors = require('cors');
-const { Resend } = require('resend');
+const Brevo = require('@getbrevo/brevo');
 const db = require('./src/config/db');
 
 const app = express();
 
-// Initialize Resend with your API Key
-const resend = new Resend(process.env.RESEND_API_KEY);
+// ==========================================
+// BREVO EMAIL SERVICE CONFIGURATION
+// ==========================================
+const apiInstance = new Brevo.TransactionalEmailsApi();
+if (process.env.BREVO_API_KEY) {
+  apiInstance.setApiKey(Brevo.TransactionalEmailsApiApiKeys.apiKey, process.env.BREVO_API_KEY);
+}
 
 // ==========================================
 // AUTOMATIC DATABASE MIGRATION
@@ -70,35 +75,31 @@ app.post(['/api/auth/forgot-password', '/api/forgot-password'], async (req, res)
 
     const resetUrl = `https://skillforge-frontend-one.vercel.app/reset-password?token=${token}`;
 
-    // Send email via Resend HTTPS API
-    const response = await resend.emails.send({
-      from: 'Skillforge Support <onboarding@resend.dev>', // Resend default testing domain
-      to: email,
-      subject: 'Skillforge Account Password Reset',
-      html: `
-        <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; background-color: #f9f9f9;">
-          <h2 style="color: #2563eb;">Password Reset Request</h2>
-          <p>Hello,</p>
-          <p>We received a request to reset the password for your Skillforge account.</p>
-          <p>Click the button below to reset your password (valid for 1 hour):</p>
-          <p style="margin: 25px 0;">
-            <a href="${resetUrl}" style="background-color: #2563eb; color: #ffffff; padding: 12px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">
-              Reset Password
-            </a>
-          </p>
-          <p>If the button above does not work, copy and paste this link into your browser:</p>
-          <p><a href="${resetUrl}">${resetUrl}</a></p>
-          <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;" />
-          <p style="font-size: 12px; color: #777;">If you did not request a password reset, you can safely ignore this email.</p>
-        </div>
-      `,
-    });
+    // Send Email via Brevo API
+    const sendSmtpEmail = new Brevo.SendSmtpEmail();
+    sendSmtpEmail.subject = "Skillforge Account Password Reset";
+    sendSmtpEmail.sender = { name: "Skillforge Support", email: "dicksonprince.wycliff@gmail.com" };
+    sendSmtpEmail.to = [{ email: email }];
+    sendSmtpEmail.htmlContent = `
+      <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; background-color: #f9f9f9;">
+        <h2 style="color: #2563eb;">Password Reset Request</h2>
+        <p>Hello,</p>
+        <p>We received a request to reset the password for your Skillforge account.</p>
+        <p>Click the button below to reset your password (valid for 1 hour):</p>
+        <p style="margin: 25px 0;">
+          <a href="${resetUrl}" style="background-color: #2563eb; color: #ffffff; padding: 12px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+            Reset Password
+          </a>
+        </p>
+        <p>If the button above does not work, copy and paste this link into your browser:</p>
+        <p><a href="${resetUrl}">${resetUrl}</a></p>
+        <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;" />
+        <p style="font-size: 12px; color: #777;">If you did not request a password reset, you can safely ignore this email.</p>
+      </div>
+    `;
 
-    if (response.error) {
-      throw new Error(response.error.message);
-    }
-
-    console.log(`📧 Reset email sent via Resend to ${email}`);
+    await apiInstance.sendTransacEmail(sendSmtpEmail);
+    console.log(`📧 Reset email sent via Brevo to ${email}`);
 
     res.json({
       success: true,
@@ -129,8 +130,9 @@ app.post(['/api/auth/reset-password', '/api/reset-password'], async (req, res) =
       return res.status(400).json({ success: false, message: 'Invalid or expired password reset token.' });
     }
 
+    // Fixed column name to password_hash
     await db.query(
-      'UPDATE users SET password = $1, reset_password_token = NULL, reset_password_expires = NULL WHERE id = $2',
+      'UPDATE users SET password_hash = $1, reset_password_token = NULL, reset_password_expires = NULL WHERE id = $2',
       [newPassword, userResult.rows[0].id]
     );
 
