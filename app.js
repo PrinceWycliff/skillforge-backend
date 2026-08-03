@@ -1,6 +1,5 @@
 const express = require('express');
 const cors = require('cors');
-const { TransactionalEmailsApi, SendSmtpEmail } = require('@getbrevo/brevo');
 const db = require('./src/config/db');
 
 const app = express();
@@ -8,12 +7,40 @@ const app = express();
 // ==========================================
 // BREVO EMAIL SERVICE CONFIGURATION
 // ==========================================
-const apiInstance = new TransactionalEmailsApi();
+const BREVO_API_KEY = process.env.BREVO_API_KEY || '';
 
-if (process.env.BREVO_API_KEY) {
-  apiInstance.setApiKey(0, process.env.BREVO_API_KEY);
-} else {
+if (!BREVO_API_KEY) {
   console.warn('⚠️ BREVO_API_KEY environment variable is missing.');
+}
+
+// Helper function to send email directly via Brevo REST API
+async function sendBrevoEmail({ to, subject, htmlContent }) {
+  if (!BREVO_API_KEY) {
+    throw new Error('BREVO_API_KEY is not configured in environment variables.');
+  }
+
+  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'accept': 'application/json',
+      'api-key': BREVO_API_KEY,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      sender: { name: 'Skillforge Support', email: 'dicksonprince.wycliff@gmail.com' },
+      to: [{ email: to }],
+      subject: subject,
+      htmlContent: htmlContent,
+    }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.message || `Brevo API error (${response.status})`);
+  }
+
+  return data;
 }
 
 // ==========================================
@@ -78,12 +105,7 @@ app.post(['/api/auth/forgot-password', '/api/forgot-password'], async (req, res)
 
     const resetUrl = `https://skillforge-frontend-one.vercel.app/reset-password?token=${token}`;
 
-    // Send Email via Brevo API
-    const sendSmtpEmail = new SendSmtpEmail();
-    sendSmtpEmail.subject = "Skillforge Account Password Reset";
-    sendSmtpEmail.sender = { name: "Skillforge Support", email: "dicksonprince.wycliff@gmail.com" };
-    sendSmtpEmail.to = [{ email: email }];
-    sendSmtpEmail.htmlContent = `
+    const htmlContent = `
       <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; background-color: #f9f9f9;">
         <h2 style="color: #2563eb;">Password Reset Request</h2>
         <p>Hello,</p>
@@ -101,8 +123,13 @@ app.post(['/api/auth/forgot-password', '/api/forgot-password'], async (req, res)
       </div>
     `;
 
-    await apiInstance.sendTransacEmail(sendSmtpEmail);
-    console.log(`📧 Reset email sent via Brevo to ${email}`);
+    await sendBrevoEmail({
+      to: email,
+      subject: 'Skillforge Account Password Reset',
+      htmlContent,
+    });
+
+    console.log(`📧 Reset email sent via Brevo API to ${email}`);
 
     res.json({
       success: true,
