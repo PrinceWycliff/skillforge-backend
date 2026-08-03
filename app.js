@@ -41,6 +41,83 @@ app.get('/', (req, res) => {
 });
 
 // ==========================================
+// AUTHENTICATION & PASSWORD RESET ROUTES
+// ==========================================
+
+// POST /api/auth/forgot-password - Generate password reset token
+app.post(['/api/auth/forgot-password', '/api/forgot-password'], async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ success: false, message: 'Email address is required.' });
+    }
+
+    // Check if user exists in the database
+    const userResult = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'No account registered with this email address.' });
+    }
+
+    // Generate token and 1-hour expiration timestamp
+    const token = Math.random().toString(36).substring(2) + Date.now().toString(36);
+    const expires = new Date(Date.now() + 3600000); // Expires in 1 hour
+
+    // Store token and expiration in PostgreSQL
+    await db.query(
+      'UPDATE users SET reset_password_token = $1, reset_password_expires = $2 WHERE email = $3',
+      [token, expires, email]
+    );
+
+    const resetUrl = `https://skillforge-frontend-one.vercel.app/reset-password?token=${token}`;
+    console.log(`🔑 Password Reset Link for ${email}: ${resetUrl}`);
+
+    res.json({
+      success: true,
+      message: 'Password reset token generated successfully.',
+      resetLink: resetUrl // Returned for instant testing/redirection
+    });
+
+  } catch (err) {
+    console.error('Forgot Password Error:', err);
+    res.status(500).json({ success: false, message: 'Database error: ' + err.message });
+  }
+});
+
+// POST /api/auth/reset-password - Verify token and update password
+app.post(['/api/auth/reset-password', '/api/reset-password'], async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+
+    if (!token || !newPassword) {
+      return res.status(400).json({ success: false, message: 'Token and new password are required.' });
+    }
+
+    // Find user with valid, unexpired token
+    const userResult = await db.query(
+      'SELECT * FROM users WHERE reset_password_token = $1 AND reset_password_expires > NOW()',
+      [token]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(400).json({ success: false, message: 'Invalid or expired password reset token.' });
+    }
+
+    // Update password and clear reset token fields
+    await db.query(
+      'UPDATE users SET password = $1, reset_password_token = NULL, reset_password_expires = NULL WHERE id = $2',
+      [newPassword, userResult.rows[0].id]
+    );
+
+    res.json({ success: true, message: 'Password has been reset successfully! You can now log in.' });
+
+  } catch (err) {
+    console.error('Reset Password Error:', err);
+    res.status(500).json({ success: false, message: 'Database error: ' + err.message });
+  }
+});
+
+// ==========================================
 // PUBLIC & COURSE ROUTES
 // ==========================================
 
