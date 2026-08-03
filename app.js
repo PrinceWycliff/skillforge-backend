@@ -4,6 +4,25 @@ const db = require('./src/config/db'); // Points to your db connection
 
 const app = express();
 
+// ==========================================
+// AUTOMATIC DATABASE MIGRATION
+// ==========================================
+// Ensures password reset columns exist in PostgreSQL on startup
+async function initDb() {
+  try {
+    await db.query(`
+      ALTER TABLE users 
+      ADD COLUMN IF NOT EXISTS reset_password_token VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS reset_password_expires TIMESTAMP;
+    `);
+    console.log('✅ Password reset database columns verified successfully.');
+  } catch (err) {
+    console.error('⚠️ Migration notice:', err.message);
+  }
+}
+
+initDb();
+
 // 1. CORS Setup
 // NOTE: app.use(cors(...)) already handles OPTIONS preflight for ALL routes.
 app.use(cors({
