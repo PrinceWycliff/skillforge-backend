@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const Brevo = require('@getbrevo/brevo');
+const { TransactionalEmailsApi, SendSmtpEmail } = require('@getbrevo/brevo');
 const db = require('./src/config/db');
 
 const app = express();
@@ -8,10 +8,10 @@ const app = express();
 // ==========================================
 // BREVO EMAIL SERVICE CONFIGURATION
 // ==========================================
-const apiInstance = new Brevo.TransactionalEmailsApi();
+const apiInstance = new TransactionalEmailsApi();
 
 if (process.env.BREVO_API_KEY) {
-  apiInstance.authentications['apiKey'].apiKey = process.env.BREVO_API_KEY;
+  apiInstance.setApiKey(0, process.env.BREVO_API_KEY);
 } else {
   console.warn('⚠️ BREVO_API_KEY environment variable is missing.');
 }
@@ -79,7 +79,7 @@ app.post(['/api/auth/forgot-password', '/api/forgot-password'], async (req, res)
     const resetUrl = `https://skillforge-frontend-one.vercel.app/reset-password?token=${token}`;
 
     // Send Email via Brevo API
-    const sendSmtpEmail = new Brevo.SendSmtpEmail();
+    const sendSmtpEmail = new SendSmtpEmail();
     sendSmtpEmail.subject = "Skillforge Account Password Reset";
     sendSmtpEmail.sender = { name: "Skillforge Support", email: "dicksonprince.wycliff@gmail.com" };
     sendSmtpEmail.to = [{ email: email }];
