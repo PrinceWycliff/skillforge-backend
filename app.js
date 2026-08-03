@@ -24,7 +24,7 @@ async function initDb() {
 
 initDb();
 
-// 1. Middleware
+// 1. Middleware Setup
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -34,13 +34,18 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// 2. Configure Nodemailer Transporter
+// 2. Configure Nodemailer Transporter (Port 587 / TLS for Render compatibility)
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false, // Must be false for port 587
   auth: {
-    user: process.env.EMAIL_USER, // Set in Render Env Vars
-    pass: process.env.EMAIL_PASS, // 16-character Gmail App Password
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
   },
+  tls: {
+    rejectUnauthorized: false // Bypasses network/cert restrictions on cloud servers
+  }
 });
 
 // Health Check
@@ -52,7 +57,7 @@ app.get('/', (req, res) => {
 // AUTHENTICATION & SMTP PASSWORD RESET
 // ==========================================
 
-// POST /api/auth/forgot-password - Generate token and dispatch email
+// POST /api/auth/forgot-password - Generate token & send email
 app.post(['/api/auth/forgot-password', '/api/forgot-password'], async (req, res) => {
   try {
     const { email } = req.body;
@@ -67,7 +72,7 @@ app.post(['/api/auth/forgot-password', '/api/forgot-password'], async (req, res)
     }
 
     const token = Math.random().toString(36).substring(2) + Date.now().toString(36);
-    const expires = new Date(Date.now() + 3600000); // 1 Hour Expiration
+    const expires = new Date(Date.now() + 3600000); // Expiration: 1 hour
 
     await db.query(
       'UPDATE users SET reset_password_token = $1, reset_password_expires = $2 WHERE email = $3',
@@ -76,9 +81,8 @@ app.post(['/api/auth/forgot-password', '/api/forgot-password'], async (req, res)
 
     const resetUrl = `https://skillforge-frontend-one.vercel.app/reset-password?token=${token}`;
 
-    // Send Email via SMTP Transporter
     const mailOptions = {
-      from: `"Skillforge Platform" <${process.env.EMAIL_USER}>`,
+      from: `"Skillforge Support" <${process.env.EMAIL_USER}>`,
       to: email,
       subject: 'Skillforge Account Password Reset',
       html: `
@@ -86,16 +90,16 @@ app.post(['/api/auth/forgot-password', '/api/forgot-password'], async (req, res)
           <h2 style="color: #2563eb;">Password Reset Request</h2>
           <p>Hello,</p>
           <p>We received a request to reset the password associated with your Skillforge account.</p>
-          <p>Click the button below to reset your password. This link is valid for 1 hour:</p>
+          <p>Click the button below to reset your password (valid for 1 hour):</p>
           <p style="margin: 25px 0;">
             <a href="${resetUrl}" style="background-color: #2563eb; color: #ffffff; padding: 12px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">
               Reset Password
             </a>
           </p>
-          <p>If the button doesn't work, copy and paste this link into your browser:</p>
+          <p>If the button above does not work, copy and paste this link into your browser:</p>
           <p><a href="${resetUrl}">${resetUrl}</a></p>
           <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;" />
-          <p style="font-size: 12px; color: #777;">If you did not request this, you can safely ignore this email.</p>
+          <p style="font-size: 12px; color: #777;">If you did not request a password reset, you can safely ignore this email.</p>
         </div>
       `,
     };
@@ -105,7 +109,7 @@ app.post(['/api/auth/forgot-password', '/api/forgot-password'], async (req, res)
 
     res.json({
       success: true,
-      message: 'Password reset link sent to your email inbox.',
+      message: 'Password reset link has been dispatched to your email inbox.',
     });
 
   } catch (err) {
@@ -146,8 +150,9 @@ app.post(['/api/auth/reset-password', '/api/reset-password'], async (req, res) =
 });
 
 // ==========================================
-// PUBLIC & ADMIN ROUTES
+// PUBLIC & COURSE ROUTES
 // ==========================================
+
 app.get('/api/courses', async (req, res) => {
   try {
     const result = await db.query('SELECT * FROM courses ORDER BY id DESC');
@@ -156,6 +161,61 @@ app.get('/api/courses', async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 });
+
+app.get('/api/courses/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await db.query('SELECT * FROM courses WHERE id = $1', [id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'Course not found.' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Fetch Course Error:', err);
+    res.status(500).json({ message: 'Database error: ' + err.message });
+  }
+});
+
+app.post('/api/courses', async (req, res) => {
+  try {
+    const { title, description, category, thumbnail, lessons, quiz } = req.body;
+
+    if (!title) {
+      return res.status(400).json({ success: false, message: 'Title is required.' });
+    }
+
+    const query = `
+      INSERT INTO courses (title, description, category, thumbnail, lessons, quiz)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING *
+    `;
+    const values = [
+      title,
+      description || '',
+      category || 'Web Development',
+      thumbnail || '',
+      JSON.stringify(lessons || []),
+      JSON.stringify(quiz || []),
+    ];
+
+    const result = await db.query(query, values);
+
+    res.status(201).json({
+      success: true,
+      message: 'Course published successfully!',
+      data: result.rows[0],
+    });
+  } catch (err) {
+    console.error('Database Error:', err);
+    res.status(500).json({ success: false, message: 'Database error: ' + err.message });
+  }
+});
+
+// ==========================================
+// ADMIN USER & CONTENT MANAGEMENT ROUTES
+// ==========================================
 
 app.get('/api/admin/users', async (req, res) => {
   try {
@@ -187,6 +247,16 @@ app.put('/api/admin/users/:id/status', async (req, res) => {
   }
 });
 
+app.delete('/api/admin/courses/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await db.query('DELETE FROM courses WHERE id = $1', [id]);
+    res.json({ success: true, message: 'Course deleted successfully.' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 app.get('/api/admin/analytics', async (req, res) => {
   try {
     const usersCount = await db.query('SELECT COUNT(*) FROM users');
@@ -207,6 +277,7 @@ app.get('/api/admin/analytics', async (req, res) => {
   }
 });
 
+// 4. Start Server Listening
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 Skillforge Express Backend running on port ${PORT}`);
