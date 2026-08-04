@@ -65,7 +65,10 @@ async function initDb() {
   try {
     await db.query(`
       ALTER TABLE courses
-      ADD COLUMN IF NOT EXISTS thumbnail TEXT;
+      ADD COLUMN IF NOT EXISTS thumbnail TEXT,
+      ADD COLUMN IF NOT EXISTS category VARCHAR(255) DEFAULT 'Web Development',
+      ADD COLUMN IF NOT EXISTS lessons JSONB DEFAULT '[]',
+      ADD COLUMN IF NOT EXISTS quiz JSONB DEFAULT '[]';
     `);
     console.log('✅ Courses schema columns verified successfully.');
   } catch (err) {
