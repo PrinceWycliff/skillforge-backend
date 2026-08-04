@@ -3,6 +3,9 @@ const cors = require('cors');
 const crypto = require('crypto');
 const db = require('./src/config/db');
 
+// Import Certificate Routes
+const certificateRoutes = require('./src/routes/certificates');
+
 const app = express();
 
 // ==========================================
@@ -95,8 +98,54 @@ app.get('/', (req, res) => {
 });
 
 // ==========================================
+// CERTIFICATE ROUTES MOUNT
+// ==========================================
+app.use('/api/certificates', certificateRoutes);
+
+// ==========================================
 // AUTHENTICATION & EMAIL VERIFICATION
 // ==========================================
+
+// POST /api/auth/login
+app.post(['/api/auth/login', '/api/login'], async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ success: false, message: 'Email and password are required.' });
+    }
+
+    const userResult = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+    if (userResult.rows.length === 0) {
+      return res.status(400).json({ success: false, message: 'Invalid email or password.' });
+    }
+
+    const user = userResult.rows[0];
+
+    if (user.password_hash !== password) {
+      return res.status(400).json({ success: false, message: 'Invalid email or password.' });
+    }
+
+    if (!user.is_verified) {
+      return res.status(403).json({ success: false, message: 'Please verify your email address before logging in.' });
+    }
+
+    res.json({
+      success: true,
+      message: 'Login successful!',
+      user: {
+        id: user.id,
+        name: user.full_name,
+        email: user.email,
+        role: user.role || 'student',
+      }
+    });
+
+  } catch (err) {
+    console.error('Login Error:', err);
+    res.status(500).json({ success: false, message: 'Login failed: ' + err.message });
+  }
+});
 
 // POST /api/auth/register
 app.post(['/api/auth/register', '/api/register'], async (req, res) => {
@@ -358,7 +407,7 @@ app.post('/api/courses', async (req, res) => {
   }
 });
 
-// DELETE /api/courses/:id — matches what the Instructor Studio frontend calls
+// DELETE /api/courses/:id
 app.delete('/api/courses/:id', async (req, res) => {
   try {
     const { id } = req.params;
