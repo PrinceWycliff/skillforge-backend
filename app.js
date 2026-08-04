@@ -61,6 +61,16 @@ async function initDb() {
   } catch (err) {
     console.error('⚠️ Migration notice:', err.message);
   }
+
+  try {
+    await db.query(`
+      ALTER TABLE courses
+      ADD COLUMN IF NOT EXISTS thumbnail TEXT;
+    `);
+    console.log('✅ Courses schema columns verified successfully.');
+  } catch (err) {
+    console.error('⚠️ Migration notice:', err.message);
+  }
 }
 
 initDb();
@@ -340,6 +350,17 @@ app.post('/api/courses', async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Database error: ' + err.message });
+  }
+});
+
+// DELETE /api/courses/:id — matches what the Instructor Studio frontend calls
+app.delete('/api/courses/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await db.query('DELETE FROM courses WHERE id = $1', [id]);
+    res.json({ success: true, message: 'Course deleted successfully.' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
