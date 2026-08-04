@@ -74,6 +74,17 @@ async function initDb() {
   } catch (err) {
     console.error('⚠️ Migration notice:', err.message);
   }
+
+  try {
+    await db.query(`
+      CREATE SEQUENCE IF NOT EXISTS courses_id_seq OWNED BY courses.id;
+      ALTER TABLE courses ALTER COLUMN id SET DEFAULT nextval('courses_id_seq');
+      SELECT setval('courses_id_seq', COALESCE((SELECT MAX(id) FROM courses), 0) + 1, false);
+    `);
+    console.log('✅ Courses id auto-increment sequence verified successfully.');
+  } catch (err) {
+    console.error('⚠️ Migration notice:', err.message);
+  }
 }
 
 initDb();
