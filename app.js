@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const crypto = require('crypto');
 const db = require('./src/config/db');
 
 const app = express();
@@ -71,17 +72,6 @@ async function initDb() {
       ADD COLUMN IF NOT EXISTS quiz JSONB DEFAULT '[]';
     `);
     console.log('✅ Courses schema columns verified successfully.');
-  } catch (err) {
-    console.error('⚠️ Migration notice:', err.message);
-  }
-
-  try {
-    await db.query(`
-      CREATE SEQUENCE IF NOT EXISTS courses_id_seq OWNED BY courses.id;
-      ALTER TABLE courses ALTER COLUMN id SET DEFAULT nextval('courses_id_seq');
-      SELECT setval('courses_id_seq', COALESCE((SELECT MAX(id) FROM courses), 0) + 1, false);
-    `);
-    console.log('✅ Courses id auto-increment sequence verified successfully.');
   } catch (err) {
     console.error('⚠️ Migration notice:', err.message);
   }
@@ -342,11 +332,12 @@ app.post('/api/courses', async (req, res) => {
     }
 
     const query = `
-      INSERT INTO courses (title, description, category, thumbnail, lessons, quiz)
-      VALUES ($1, $2, $3, $4, $5, $6)
+      INSERT INTO courses (id, title, description, category, thumbnail, lessons, quiz)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING *
     `;
     const values = [
+      crypto.randomUUID(),
       title,
       description || '',
       category || 'Web Development',
