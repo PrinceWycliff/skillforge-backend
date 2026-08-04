@@ -52,9 +52,12 @@ async function initDb() {
       ALTER TABLE users 
       ADD COLUMN IF NOT EXISTS reset_password_token VARCHAR(255),
       ADD COLUMN IF NOT EXISTS reset_password_expires TIMESTAMP,
-      ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'active';
+      ADD COLUMN IF NOT EXISTS verification_token VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS verification_expires TIMESTAMP,
+      ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'pending';
     `);
-    console.log('✅ Password reset & user status database columns verified successfully.');
+    console.log('✅ User schema columns and verification fields verified successfully.');
   } catch (err) {
     console.error('⚠️ Migration notice:', err.message);
   }
@@ -78,7 +81,112 @@ app.get('/', (req, res) => {
 });
 
 // ==========================================
-// AUTHENTICATION & EMAIL PASSWORD RESET
+// AUTHENTICATION & EMAIL VERIFICATION
+// ==========================================
+
+// POST /api/auth/register
+app.post(['/api/auth/register', '/api/register'], async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+
+    if (!email || !password || !name) {
+      return res.status(400).json({ success: false, message: 'Name, email, and password are required.' });
+    }
+
+    // Check if user exists
+    const existingUser = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+    if (existingUser.rows.length > 0) {
+      return res.status(400).json({ success: false, message: 'An account with this email already exists.' });
+    }
+
+    // Generate Verification Token (24-hour expiration)
+    const verificationToken = Math.random().toString(36).substring(2) + Date.now().toString(36);
+    const verificationExpires = new Date(Date.now() + 24 * 3600000); 
+
+    // Insert new user as unverified
+    await db.query(
+      `INSERT INTO users (full_name, email, password_hash, is_verified, status, verification_token, verification_expires) 
+       VALUES ($1, $2, $3, false, 'pending', $4, $5)`,
+      [name, email, password, verificationToken, verificationExpires]
+    );
+
+    const verifyUrl = `https://skillforge-frontend-one.vercel.app/verify-email?token=${verificationToken}`;
+
+    const htmlContent = `
+      <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; background-color: #f9f9f9;">
+        <h2 style="color: #2563eb;">Welcome to Skillforge!</h2>
+        <p>Hi ${name},</p>
+        <p>Thank you for registering. Please confirm your email address to activate your account:</p>
+        <p style="margin: 25px 0;">
+          <a href="${verifyUrl}" style="background-color: #2563eb; color: #ffffff; padding: 12px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+            Verify Email Address
+          </a>
+        </p>
+        <p>If the button above does not work, copy and paste this link into your browser:</p>
+        <p><a href="${verifyUrl}">${verifyUrl}</a></p>
+        <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;" />
+        <p style="font-size: 12px; color: #777;">If you did not register for Skillforge, you can safely ignore this email.</p>
+      </div>
+    `;
+
+    await sendBrevoEmail({
+      to: email,
+      subject: 'Verify Your Skillforge Account',
+      htmlContent
+    });
+
+    console.log(`📧 Verification email sent via Brevo API to ${email}`);
+
+    res.status(201).json({
+      success: true,
+      message: 'Account created! Please check your email inbox to verify your account.'
+    });
+
+  } catch (err) {
+    console.error('Registration Error:', err);
+    res.status(500).json({ success: false, message: 'Registration failed: ' + err.message });
+  }
+});
+
+// POST /api/auth/verify-email
+app.post(['/api/auth/verify-email', '/api/verify-email'], async (req, res) => {
+  try {
+    const { token } = req.body;
+
+    if (!token) {
+      return res.status(400).json({ success: false, message: 'Verification token is required.' });
+    }
+
+    const userResult = await db.query(
+      'SELECT * FROM users WHERE verification_token = $1 AND verification_expires > NOW()',
+      [token]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(400).json({ success: false, message: 'Invalid or expired verification link.' });
+    }
+
+    // Activate Account
+    await db.query(
+      `UPDATE users 
+       SET is_verified = true, status = 'active', verification_token = NULL, verification_expires = NULL 
+       WHERE id = $1`,
+      [userResult.rows[0].id]
+    );
+
+    res.json({
+      success: true,
+      message: 'Your email address has been successfully verified! You can now log in.'
+    });
+
+  } catch (err) {
+    console.error('Email Verification Error:', err);
+    res.status(500).json({ success: false, message: 'Verification error: ' + err.message });
+  }
+});
+
+// ==========================================
+// EMAIL PASSWORD RESET ROUTES
 // ==========================================
 
 // POST /api/auth/forgot-password
