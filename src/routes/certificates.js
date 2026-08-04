@@ -4,12 +4,30 @@ const PDFDocument = require('pdfkit');
 const crypto = require('crypto');
 const QRCode = require('qrcode');
 
-// GET /api/certificates/generate/:courseId
+// GET /api/certificates/generate/:courseId?name=...&courseTitle=...&score=...
 router.get('/generate/:courseId', async (req, res) => {
   try {
     const { courseId } = req.params;
-    const userName = "Student Developer"; // Will pull dynamically from user session
-    
+    const { name, courseTitle, score } = req.query;
+
+    // --- Eligibility checks (this is the actual gate, not just the UI) ---
+    if (!name || name.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'A student name is required to generate a certificate.',
+      });
+    }
+
+    const parsedScore = parseFloat(score);
+    if (isNaN(parsedScore) || parsedScore < 85) {
+      return res.status(403).json({
+        success: false,
+        message: 'A minimum quiz score of 85% is required to earn this certificate.',
+      });
+    }
+
+    const userName = name.trim();
+
     // Security Tokens & Serial Number
     const certHash = 'SF-' + crypto.randomBytes(4).toString('hex').toUpperCase();
     const verificationUrl = `https://skillforge.dev/verify/${certHash}`;
@@ -101,7 +119,9 @@ router.get('/generate/:courseId', async (req, res) => {
        .text('has successfully completed all modules and passed the mastery assessment for:', 0, 285, { align: 'center' });
 
     // --- 3. COURSE NAME (PROMINENTLY DISPLAYED) ---
-    const formattedCourseName = courseId.toUpperCase().replace(/-/g, ' ');
+    const formattedCourseName = courseTitle && courseTitle.trim().length > 0
+      ? courseTitle.trim().toUpperCase()
+      : courseId.toUpperCase().replace(/-/g, ' ');
 
     doc.fillColor(TEXT_WHITE)
        .fontSize(22)
