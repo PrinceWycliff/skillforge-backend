@@ -82,19 +82,75 @@ async function initDb() {
   } catch (err) {
     console.error('⚠️ Migration notice:', err.message);
   }
+
+  // Enrollment table migration to track DB user course enrollments cleanly
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS user_courses (
+        id SERIAL PRIMARY KEY,
+        user_id INT REFERENCES users(id) ON DELETE CASCADE,
+        course_id VARCHAR(255),
+        progress INT DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, course_id)
+      );
+    `);
+    console.log('✅ User courses enrollment schema verified successfully.');
+  } catch (err) {
+    console.error('⚠️ Migration notice:', err.message);
+  }
 }
 
 initDb();
 
-// Middleware
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+// ==========================================
+// CORS & MIDDLEWARE CONFIGURATION
+// ==========================================
+const allowedOrigins = [
+  'https://skillforge-frontend-one.vercel.app',
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://localhost:5000'
+];
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.indexOf(origin) !== -1 || origin.endsWith('.vercel.app')) {
+        return callback(null, true);
+      } else {
+        return callback(null, true); // Fallback allow to avoid unexpected blocking
+      }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  })
+);
+
+app.options('*', cors());
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Auth Token Verification Middleware
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ success: false, message: 'Access token required.' });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({ success: false, message: 'Invalid or expired token.' });
+    }
+    req.user = user;
+    next();
+  });
+};
 
 // Health Check
 app.get('/', (req, res) => {
@@ -114,20 +170,15 @@ app.post(['/api/auth/register', '/api/register'], async (req, res) => {
       return res.status(400).json({ success: false, message: 'Name, email, and password are required.' });
     }
 
-    // Check if user exists
     const existingUser = await db.query('SELECT * FROM users WHERE email = $1', [email]);
     if (existingUser.rows.length > 0) {
       return res.status(400).json({ success: false, message: 'An account with this email already exists.' });
     }
 
-    // Hash the password before storing it
     const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Generate Verification Token (24-hour expiration)
     const verificationToken = Math.random().toString(36).substring(2) + Date.now().toString(36);
-    const verificationExpires = new Date(Date.now() + 24 * 3600000); 
+    const verificationExpires = new Date(Date.now() + 24 * 3600000);
 
-    // Insert new user as unverified
     await db.query(
       `INSERT INTO users (full_name, email, password_hash, is_verified, status, verification_token, verification_expires) 
        VALUES ($1, $2, $3, false, 'pending', $4, $5)`,
@@ -190,7 +241,6 @@ app.post(['/api/auth/verify-email', '/api/verify-email'], async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid or expired verification link.' });
     }
 
-    // Activate Account
     await db.query(
       `UPDATE users 
        SET is_verified = true, status = 'active', verification_token = NULL, verification_expires = NULL 
@@ -328,7 +378,7 @@ app.post(['/api/auth/forgot-password', '/api/forgot-password'], async (req, res)
     }
 
     const token = Math.random().toString(36).substring(2) + Date.now().toString(36);
-    const expires = new Date(Date.now() + 3600000); // 1 hour expiration
+    const expires = new Date(Date.now() + 3600000);
 
     await db.query(
       'UPDATE users SET reset_password_token = $1, reset_password_expires = $2 WHERE email = $3',
@@ -404,6 +454,75 @@ app.post(['/api/auth/reset-password', '/api/reset-password'], async (req, res) =
   } catch (err) {
     console.error('Reset Password Error:', err);
     res.status(500).json({ success: false, message: 'Database error: ' + err.message });
+  }
+});
+
+// ==========================================
+// USER ENROLLMENT & PROFILE ENDPOINTS (FIXES CORS & MISSING DETAILS)
+// ==========================================
+
+// GET user profile & populated enrolled courses
+app.get(
+  ['/api/users/me', '/api/user/profile', '/api/enrollments/my-courses', '/api/courses/enrolled'],
+  authenticateToken,
+  async (req, res) => {
+    try {
+      const userRes = await db.query(
+        'SELECT id, full_name, email, status FROM users WHERE id = $1',
+        [req.user.id]
+      );
+
+      if (userRes.rows.length === 0) {
+        return res.status(404).json({ success: false, message: 'User not found.' });
+      }
+
+      const user = userRes.rows[0];
+
+      // Fetch enrolled courses populated with title, description, category, thumbnail
+      const enrolledRes = await db.query(
+        `SELECT c.id, c.title, c.description, c.category, c.thumbnail, uc.progress 
+         FROM user_courses uc 
+         JOIN courses c ON uc.course_id = c.id 
+         WHERE uc.user_id = $1 
+         ORDER BY uc.created_at DESC`,
+        [req.user.id]
+      );
+
+      res.json({
+        success: true,
+        user: {
+          id: user.id,
+          name: user.full_name,
+          email: user.email,
+        },
+        enrolledCourses: enrolledRes.rows,
+        courses: enrolledRes.rows,
+      });
+    } catch (err) {
+      console.error('Fetch Enrolled Courses Error:', err);
+      res.status(500).json({ success: false, message: err.message });
+    }
+  }
+);
+
+// POST enroll in course
+app.post('/api/enrollments', authenticateToken, async (req, res) => {
+  try {
+    const { courseId } = req.body;
+    if (!courseId) {
+      return res.status(400).json({ success: false, message: 'courseId is required.' });
+    }
+
+    await db.query(
+      `INSERT INTO user_courses (user_id, course_id, progress) 
+       VALUES ($1, $2, 0) 
+       ON CONFLICT (user_id, course_id) DO NOTHING`,
+      [req.user.id, courseId]
+    );
+
+    res.json({ success: true, message: 'Enrolled in course successfully.' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
