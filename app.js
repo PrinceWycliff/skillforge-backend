@@ -104,32 +104,32 @@ async function initDb() {
 initDb();
 
 // ==========================================
-// CORS & MIDDLEWARE CONFIGURATION
+// EXPLICIT CORS & MIDDLEWARE CONFIGURATION
 // ==========================================
-const allowedOrigins = [
-  'https://skillforge-frontend-one.vercel.app',
-  'http://localhost:5173',
-  'http://localhost:3000',
-  'http://localhost:5000'
-];
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
 
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.indexOf(origin) !== -1 || origin.endsWith('.vercel.app')) {
-        return callback(null, true);
-      } else {
-        return callback(null, true); // Fallback allow to avoid unexpected blocking
-      }
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
-  })
-);
+  // Allow Vercel deployments, localhost, and server-to-server calls
+  if (!origin || origin.includes('vercel.app') || origin.includes('localhost')) {
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
 
-app.options('*', cors());
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+
+  // Answer preflight OPTIONS requests instantly with 200 OK
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  next();
+});
+
+// Backup CORS fallback
+app.use(cors({ origin: true, credentials: true }));
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -458,7 +458,7 @@ app.post(['/api/auth/reset-password', '/api/reset-password'], async (req, res) =
 });
 
 // ==========================================
-// USER ENROLLMENT & PROFILE ENDPOINTS (FIXES CORS & MISSING DETAILS)
+// USER ENROLLMENT & PROFILE ENDPOINTS
 // ==========================================
 
 // GET user profile & populated enrolled courses
@@ -589,7 +589,6 @@ app.post('/api/courses', async (req, res) => {
   }
 });
 
-// DELETE /api/courses/:id — matches what the Instructor Studio frontend calls
 app.delete('/api/courses/:id', async (req, res) => {
   try {
     const { id } = req.params;
