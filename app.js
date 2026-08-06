@@ -1,12 +1,16 @@
 const express = require('express');
 const cors = require('cors');
 const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const db = require('./src/config/db');
 
-// Import Certificate Routes
-const certificateRoutes = require('./src/routes/certificates');
-
 const app = express();
+
+const JWT_SECRET = process.env.JWT_SECRET || 'skillforge-dev-secret-change-in-production';
+if (!process.env.JWT_SECRET) {
+  console.warn('⚠️ JWT_SECRET environment variable is missing. Using an insecure default — set this in production!');
+}
 
 // ==========================================
 // BREVO EMAIL SERVICE CONFIGURATION
@@ -98,54 +102,8 @@ app.get('/', (req, res) => {
 });
 
 // ==========================================
-// CERTIFICATE ROUTES MOUNT
-// ==========================================
-app.use('/api/certificates', certificateRoutes);
-
-// ==========================================
 // AUTHENTICATION & EMAIL VERIFICATION
 // ==========================================
-
-// POST /api/auth/login
-app.post(['/api/auth/login', '/api/login'], async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({ success: false, message: 'Email and password are required.' });
-    }
-
-    const userResult = await db.query('SELECT * FROM users WHERE email = $1', [email]);
-    if (userResult.rows.length === 0) {
-      return res.status(400).json({ success: false, message: 'Invalid email or password.' });
-    }
-
-    const user = userResult.rows[0];
-
-    if (user.password_hash !== password) {
-      return res.status(400).json({ success: false, message: 'Invalid email or password.' });
-    }
-
-    if (!user.is_verified) {
-      return res.status(403).json({ success: false, message: 'Please verify your email address before logging in.' });
-    }
-
-    res.json({
-      success: true,
-      message: 'Login successful!',
-      user: {
-        id: user.id,
-        name: user.full_name,
-        email: user.email,
-        role: user.role || 'student',
-      }
-    });
-
-  } catch (err) {
-    console.error('Login Error:', err);
-    res.status(500).json({ success: false, message: 'Login failed: ' + err.message });
-  }
-});
 
 // POST /api/auth/register
 app.post(['/api/auth/register', '/api/register'], async (req, res) => {
@@ -162,6 +120,9 @@ app.post(['/api/auth/register', '/api/register'], async (req, res) => {
       return res.status(400).json({ success: false, message: 'An account with this email already exists.' });
     }
 
+    // Hash the password before storing it
+    const hashedPassword = await bcrypt.hash(password, 10);
+
     // Generate Verification Token (24-hour expiration)
     const verificationToken = Math.random().toString(36).substring(2) + Date.now().toString(36);
     const verificationExpires = new Date(Date.now() + 24 * 3600000); 
@@ -170,7 +131,7 @@ app.post(['/api/auth/register', '/api/register'], async (req, res) => {
     await db.query(
       `INSERT INTO users (full_name, email, password_hash, is_verified, status, verification_token, verification_expires) 
        VALUES ($1, $2, $3, false, 'pending', $4, $5)`,
-      [name, email, password, verificationToken, verificationExpires]
+      [name, email, hashedPassword, verificationToken, verificationExpires]
     );
 
     const verifyUrl = `https://skillforge-frontend-one.vercel.app/verify-email?token=${verificationToken}`;
@@ -245,6 +206,106 @@ app.post(['/api/auth/verify-email', '/api/verify-email'], async (req, res) => {
   } catch (err) {
     console.error('Email Verification Error:', err);
     res.status(500).json({ success: false, message: 'Verification error: ' + err.message });
+  }
+});
+
+// POST /api/auth/login
+app.post(['/api/auth/login', '/api/login'], async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ success: false, message: 'Email and password are required.' });
+    }
+
+    const userResult = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+    if (userResult.rows.length === 0) {
+      return res.status(401).json({ success: false, message: 'Invalid email or password.' });
+    }
+
+    const user = userResult.rows[0];
+
+    if (!user.is_verified) {
+      return res.status(403).json({ success: false, message: 'Please verify your email before logging in. Check your inbox for the verification link.' });
+    }
+
+    const passwordMatches = await bcrypt.compare(password, user.password_hash || '');
+    if (!passwordMatches) {
+      return res.status(401).json({ success: false, message: 'Invalid email or password.' });
+    }
+
+    const token = jwt.sign(
+      { id: user.id, email: user.email, name: user.full_name },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.json({
+      success: true,
+      token,
+      user: { id: user.id, name: user.full_name, email: user.email },
+    });
+  } catch (err) {
+    console.error('Login Error:', err);
+    res.status(500).json({ success: false, message: 'Login failed: ' + err.message });
+  }
+});
+
+// POST /api/auth/resend-verification
+app.post(['/api/auth/resend-verification', '/api/resend-verification'], async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ success: false, message: 'Email is required.' });
+    }
+
+    const userResult = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'No account found with this email.' });
+    }
+
+    const user = userResult.rows[0];
+
+    if (user.is_verified) {
+      return res.status(400).json({ success: false, message: 'This account is already verified. Please log in.' });
+    }
+
+    const verificationToken = Math.random().toString(36).substring(2) + Date.now().toString(36);
+    const verificationExpires = new Date(Date.now() + 24 * 3600000);
+
+    await db.query(
+      'UPDATE users SET verification_token = $1, verification_expires = $2 WHERE id = $3',
+      [verificationToken, verificationExpires, user.id]
+    );
+
+    const verifyUrl = `https://skillforge-frontend-one.vercel.app/verify-email?token=${verificationToken}`;
+
+    const htmlContent = `
+      <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; background-color: #f9f9f9;">
+        <h2 style="color: #2563eb;">Verify Your Skillforge Account</h2>
+        <p>Hi ${user.full_name},</p>
+        <p>Here's your new verification link to activate your account:</p>
+        <p style="margin: 25px 0;">
+          <a href="${verifyUrl}" style="background-color: #2563eb; color: #ffffff; padding: 12px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+            Verify Email Address
+          </a>
+        </p>
+        <p>If the button above does not work, copy and paste this link into your browser:</p>
+        <p><a href="${verifyUrl}">${verifyUrl}</a></p>
+      </div>
+    `;
+
+    await sendBrevoEmail({
+      to: email,
+      subject: 'Verify Your Skillforge Account',
+      htmlContent,
+    });
+
+    res.json({ success: true, message: 'Verification email resent. Please check your inbox.' });
+  } catch (err) {
+    console.error('Resend Verification Error:', err);
+    res.status(500).json({ success: false, message: 'Failed to resend verification email: ' + err.message });
   }
 });
 
@@ -331,9 +392,11 @@ app.post(['/api/auth/reset-password', '/api/reset-password'], async (req, res) =
       return res.status(400).json({ success: false, message: 'Invalid or expired password reset token.' });
     }
 
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
     await db.query(
       'UPDATE users SET password_hash = $1, reset_password_token = NULL, reset_password_expires = NULL WHERE id = $2',
-      [newPassword, userResult.rows[0].id]
+      [hashedPassword, userResult.rows[0].id]
     );
 
     res.json({ success: true, message: 'Password has been reset successfully!' });
@@ -407,7 +470,7 @@ app.post('/api/courses', async (req, res) => {
   }
 });
 
-// DELETE /api/courses/:id
+// DELETE /api/courses/:id — matches what the Instructor Studio frontend calls
 app.delete('/api/courses/:id', async (req, res) => {
   try {
     const { id } = req.params;
