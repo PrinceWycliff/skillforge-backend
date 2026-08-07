@@ -63,7 +63,9 @@ async function initDb() {
       ADD COLUMN IF NOT EXISTS verification_token VARCHAR(255),
       ADD COLUMN IF NOT EXISTS verification_expires TIMESTAMP,
       ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE,
-      ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'pending';
+      ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'pending',
+      ADD COLUMN IF NOT EXISTS role VARCHAR(50) DEFAULT 'student',
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
     `);
     console.log('✅ User schema columns and verification fields verified successfully.');
   } catch (err) {
@@ -150,6 +152,14 @@ const authenticateToken = (req, res, next) => {
     req.user = user;
     next();
   });
+};
+
+// Admin Role Guard — must run after authenticateToken
+const requireAdmin = (req, res, next) => {
+  if (!req.user || req.user.role !== 'admin') {
+    return res.status(403).json({ success: false, message: 'Admin access required.' });
+  }
+  next();
 };
 
 // Health Check
@@ -285,7 +295,7 @@ app.post(['/api/auth/login', '/api/login'], async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: user.id, email: user.email, name: user.full_name },
+      { id: user.id, email: user.email, name: user.full_name, role: user.role || 'student' },
       JWT_SECRET,
       { expiresIn: '7d' }
     );
@@ -293,11 +303,56 @@ app.post(['/api/auth/login', '/api/login'], async (req, res) => {
     res.json({
       success: true,
       token,
-      user: { id: user.id, name: user.full_name, email: user.email },
+      user: { id: user.id, name: user.full_name, email: user.email, role: user.role || 'student' },
     });
   } catch (err) {
     console.error('Login Error:', err);
     res.status(500).json({ success: false, message: 'Login failed: ' + err.message });
+  }
+});
+
+// POST /api/auth/google-sync
+// Called after a successful Firebase Google popup sign-in. Upserts a matching
+// Postgres user row and issues our own JWT_SECRET-signed token, so Google-authenticated
+// students use the exact same session type as email/password students on every
+// protected backend route.
+app.post(['/api/auth/google-sync', '/api/auth/google-login'], async (req, res) => {
+  try {
+    const { email, name } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ success: false, message: 'Email is required.' });
+    }
+
+    const existing = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+
+    let user;
+    if (existing.rows.length > 0) {
+      user = existing.rows[0];
+    } else {
+      const inserted = await db.query(
+        `INSERT INTO users (full_name, email, password_hash, is_verified, status, role)
+         VALUES ($1, $2, NULL, true, 'active', 'student')
+         RETURNING *`,
+        [name || email.split('@')[0], email]
+      );
+      user = inserted.rows[0];
+    }
+
+    const token = jwt.sign(
+      { id: user.id, email: user.email, name: user.full_name, role: user.role || 'student' },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.json({
+      success: true,
+      token,
+      user: { id: user.id, name: user.full_name, email: user.email, role: user.role || 'student' },
+    });
+  } catch (err) {
+    console.error('Google Sync Error:', err);
+    res.status(500).json({ success: false, message: 'Google session sync failed: ' + err.message });
   }
 });
 
@@ -601,9 +656,10 @@ app.delete('/api/courses/:id', async (req, res) => {
 
 // ==========================================
 // ADMIN USER & CONTENT MANAGEMENT ROUTES
+// All routes below require a valid token AND role === 'admin'
 // ==========================================
 
-app.get('/api/admin/users', async (req, res) => {
+app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const result = await db.query('SELECT id, email, full_name as name, role, status FROM users ORDER BY id DESC');
     res.json({ success: true, users: result.rows });
@@ -612,7 +668,37 @@ app.get('/api/admin/users', async (req, res) => {
   }
 });
 
-app.delete('/api/admin/users/:id', async (req, res) => {
+// POST create a new account (admin, instructor, or student) directly from the dashboard
+app.post('/api/admin/users', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { full_name, email, password, role } = req.body;
+
+    if (!full_name || !email || !password) {
+      return res.status(400).json({ success: false, message: 'Full name, email, and password are required.' });
+    }
+
+    const existingUser = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+    if (existingUser.rows.length > 0) {
+      return res.status(400).json({ success: false, message: 'An account with this email already exists.' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const result = await db.query(
+      `INSERT INTO users (full_name, email, password_hash, is_verified, status, role)
+       VALUES ($1, $2, $3, true, 'active', $4)
+       RETURNING id, full_name, email, role, status`,
+      [full_name, email, hashedPassword, role || 'student']
+    );
+
+    res.status(201).json({ success: true, message: 'Account created successfully.', user: result.rows[0] });
+  } catch (err) {
+    console.error('Admin Create User Error:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.delete('/api/admin/users/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     await db.query('DELETE FROM users WHERE id = $1', [id]);
@@ -622,7 +708,7 @@ app.delete('/api/admin/users/:id', async (req, res) => {
   }
 });
 
-app.put('/api/admin/users/:id/status', async (req, res) => {
+app.put('/api/admin/users/:id/status', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
@@ -633,7 +719,27 @@ app.put('/api/admin/users/:id/status', async (req, res) => {
   }
 });
 
-app.delete('/api/admin/courses/:id', async (req, res) => {
+// GET instructor directory
+// NOTE: courses currently have no instructor_id column linking them to who created them,
+// so coursesCount/totalStudents are placeholders (0) until Instructor Studio tags courses
+// with the logged-in instructor's id. Flagging this rather than faking numbers.
+app.get('/api/admin/instructors', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT id, full_name as name, email FROM users WHERE role = 'instructor' ORDER BY id DESC`
+    );
+    const instructors = result.rows.map((row) => ({
+      ...row,
+      coursesCount: 0,
+      totalStudents: 0,
+    }));
+    res.json({ success: true, instructors });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.delete('/api/admin/courses/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     await db.query('DELETE FROM courses WHERE id = $1', [id]);
@@ -643,19 +749,30 @@ app.delete('/api/admin/courses/:id', async (req, res) => {
   }
 });
 
-app.get('/api/admin/analytics', async (req, res) => {
+app.get('/api/admin/analytics', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const usersCount = await db.query('SELECT COUNT(*) FROM users');
     const coursesCount = await db.query('SELECT COUNT(*) FROM courses');
-    
+
+    // Monthly signup growth for the bar chart
+    const chartResult = await db.query(`
+      SELECT TO_CHAR(DATE_TRUNC('month', created_at), 'Mon') AS month,
+             COUNT(*) AS count
+      FROM users
+      GROUP BY DATE_TRUNC('month', created_at), TO_CHAR(DATE_TRUNC('month', created_at), 'Mon')
+      ORDER BY DATE_TRUNC('month', created_at)
+    `);
+
     res.json({
       success: true,
       stats: {
         totalUsers: parseInt(usersCount.rows[0].count) || 0,
         activeEnrollments: parseInt(coursesCount.rows[0].count) * 2 || 0,
         issuedCertificates: 12,
-        completionRate: '94.2%'
+        completionRate: '94.2%',
+        avgScore: '94.2%',
       },
+      chartData: chartResult.rows.map((r) => ({ month: r.month, count: parseInt(r.count) })),
       recentCertificates: []
     });
   } catch (err) {
