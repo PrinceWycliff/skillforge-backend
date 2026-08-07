@@ -115,14 +115,13 @@ const allowedOrigins = [
 
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allow requests with no origin (mobile apps, Postman, curl)
     if (!origin) return callback(null, true);
     
     if (allowedOrigins.indexOf(origin) !== -1 || origin.endsWith('.vercel.app') || origin.endsWith('.netlify.app')) {
       return callback(null, true);
     }
     
-    return callback(null, true); // Fallback to accept origin
+    return callback(null, true);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
@@ -130,8 +129,7 @@ const corsOptions = {
   optionsSuccessStatus: 200
 };
 
-// Apply CORS preflight handling across all routes
-app.options('*', cors(corsOptions));
+// Global CORS Middleware (Handles preflight OPTIONS requests automatically)
 app.use(cors(corsOptions));
 
 app.use(express.json({ limit: '10mb' }));
@@ -164,7 +162,7 @@ app.get('/', (req, res) => {
 // AUTHENTICATION & EMAIL VERIFICATION
 // ==========================================
 
-// POST /api/auth/register (Handles both single and double /api prefixes cleanly)
+// POST /api/auth/register
 app.post(['/api/auth/register', '/auth/register', '/api/register'], async (req, res) => {
   try {
     const { name, email, password, role } = req.body;
@@ -182,7 +180,6 @@ app.post(['/api/auth/register', '/auth/register', '/api/register'], async (req, 
     const verificationToken = Math.random().toString(36).substring(2) + Date.now().toString(36);
     const verificationExpires = new Date(Date.now() + 24 * 3600000);
     
-    // Assign role dynamically based on registration payload
     const userRole = (role === 'admin') ? 'admin' : 'student';
 
     await db.query(
