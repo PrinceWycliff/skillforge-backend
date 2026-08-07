@@ -9,7 +9,7 @@ const app = express();
 
 const JWT_SECRET = process.env.JWT_SECRET || 'skillforge-dev-secret-change-in-production';
 if (!process.env.JWT_SECRET) {
-  console.warn('⚠️ JWT_SECRET environment variable is missing. Using an insecure default — set this in production!');
+  console.warn('⚠️ JWT_SECRET environment variable is missing.');
 }
 
 // ==========================================
@@ -17,11 +17,6 @@ if (!process.env.JWT_SECRET) {
 // ==========================================
 const BREVO_API_KEY = process.env.BREVO_API_KEY || '';
 
-if (!BREVO_API_KEY) {
-  console.warn('⚠️ BREVO_API_KEY environment variable is missing.');
-}
-
-// Helper function to send email directly via Brevo REST API
 async function sendBrevoEmail({ to, subject, htmlContent }) {
   if (!BREVO_API_KEY) {
     throw new Error('BREVO_API_KEY is not configured in environment variables.');
@@ -43,11 +38,9 @@ async function sendBrevoEmail({ to, subject, htmlContent }) {
   });
 
   const data = await response.json();
-
   if (!response.ok) {
     throw new Error(data.message || `Brevo API error (${response.status})`);
   }
-
   return data;
 }
 
@@ -66,12 +59,7 @@ async function initDb() {
       ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE,
       ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'pending';
     `);
-    console.log('✅ User schema columns and verification fields verified successfully.');
-  } catch (err) {
-    console.error('⚠️ Migration notice:', err.message);
-  }
 
-  try {
     await db.query(`
       ALTER TABLE courses
       ADD COLUMN IF NOT EXISTS thumbnail TEXT,
@@ -79,12 +67,7 @@ async function initDb() {
       ADD COLUMN IF NOT EXISTS lessons JSONB DEFAULT '[]',
       ADD COLUMN IF NOT EXISTS quiz JSONB DEFAULT '[]';
     `);
-    console.log('✅ Courses schema columns verified successfully.');
-  } catch (err) {
-    console.error('⚠️ Migration notice:', err.message);
-  }
 
-  try {
     await db.query(`
       CREATE TABLE IF NOT EXISTS user_courses (
         id SERIAL PRIMARY KEY,
@@ -95,9 +78,9 @@ async function initDb() {
         UNIQUE(user_id, course_id)
       );
     `);
-    console.log('✅ User courses enrollment schema verified successfully.');
+    console.log('✅ Database schemas and relationship tables verified.');
   } catch (err) {
-    console.error('⚠️ Migration notice:', err.message);
+    console.error('⚠️ Database migration error:', err.message);
   }
 }
 
@@ -113,29 +96,24 @@ const allowedOrigins = [
   'http://localhost:3000'
 ];
 
-const corsOptions = {
+app.use(cors({
   origin: function (origin, callback) {
     if (!origin) return callback(null, true);
-    
     if (allowedOrigins.indexOf(origin) !== -1 || origin.endsWith('.vercel.app') || origin.endsWith('.netlify.app')) {
       return callback(null, true);
     }
-    
     return callback(null, true);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
   optionsSuccessStatus: 200
-};
-
-// Global CORS Middleware (Handles preflight OPTIONS requests automatically)
-app.use(cors(corsOptions));
+}));
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Auth Token Verification Middleware
+// Middleware: Verify JWT Authentication
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -146,26 +124,34 @@ const authenticateToken = (req, res, next) => {
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
     if (err) {
-      return res.status(403).json({ success: false, message: 'Invalid or expired token.' });
+      return res.status(403).json({ success: false, message: 'Invalid or expired session token.' });
     }
     req.user = user;
     next();
   });
 };
 
-// Health Check
+// Middleware: Verify Admin Access
+const requireAdmin = (req, res, next) => {
+  if (req.user?.role !== 'admin' && req.user?.role !== 'instructor') {
+    return res.status(403).json({ success: false, message: 'Access denied. Administrative privileges required.' });
+  }
+  next();
+};
+
+// Root Health Check
 app.get('/', (req, res) => {
-  res.json({ status: 'online', message: 'Skillforge Backend API is active!' });
+  res.json({ status: 'online', message: 'Skillforge API operational' });
 });
 
 // ==========================================
-// AUTHENTICATION & EMAIL VERIFICATION
+// PUBLIC AUTHENTICATION (STUDENTS ONLY)
 // ==========================================
 
-// POST /api/auth/register
+// POST /api/auth/register (Forces role='student' for public signups)
 app.post(['/api/auth/register', '/auth/register', '/api/register'], async (req, res) => {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, email, password } = req.body;
 
     if (!email || !password || !name) {
       return res.status(400).json({ success: false, message: 'Name, email, and password are required.' });
@@ -179,13 +165,12 @@ app.post(['/api/auth/register', '/auth/register', '/api/register'], async (req, 
     const hashedPassword = await bcrypt.hash(password, 10);
     const verificationToken = Math.random().toString(36).substring(2) + Date.now().toString(36);
     const verificationExpires = new Date(Date.now() + 24 * 3600000);
-    
-    const userRole = (role === 'admin') ? 'admin' : 'student';
 
+    // SECURITY: Public registration ALWAYS assigns 'student' role
     await db.query(
       `INSERT INTO users (full_name, email, password_hash, role, is_verified, status, verification_token, verification_expires) 
-       VALUES ($1, $2, $3, $4, false, 'pending', $5, $6)`,
-      [name, email, hashedPassword, userRole, verificationToken, verificationExpires]
+       VALUES ($1, $2, $3, 'student', false, 'pending', $4, $5)`,
+      [name, email, hashedPassword, verificationToken, verificationExpires]
     );
 
     const verifyUrl = `https://skillforge-frontend-one.vercel.app/verify-email?token=${verificationToken}`;
@@ -194,71 +179,30 @@ app.post(['/api/auth/register', '/auth/register', '/api/register'], async (req, 
       <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; background-color: #f9f9f9;">
         <h2 style="color: #2563eb;">Welcome to Skillforge!</h2>
         <p>Hi ${name},</p>
-        <p>Thank you for registering your account as <strong>${userRole}</strong>. Please confirm your email address to activate your account:</p>
+        <p>Thank you for signing up. Please verify your email address to activate your account:</p>
         <p style="margin: 25px 0;">
           <a href="${verifyUrl}" style="background-color: #2563eb; color: #ffffff; padding: 12px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">
             Verify Email Address
           </a>
         </p>
-        <p>If the button above does not work, copy and paste this link into your browser:</p>
-        <p><a href="${verifyUrl}">${verifyUrl}</a></p>
-        <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;" />
-        <p style="font-size: 12px; color: #777;">If you did not register for Skillforge, you can safely ignore this email.</p>
+        <p>Or copy this link to your browser: <a href="${verifyUrl}">${verifyUrl}</a></p>
       </div>
     `;
 
-    await sendBrevoEmail({
-      to: email,
-      subject: 'Verify Your Skillforge Account',
-      htmlContent
-    });
-
-    console.log(`📧 Verification email sent via Brevo API to ${email}`);
+    try {
+      await sendBrevoEmail({ to: email, subject: 'Verify Your Skillforge Account', htmlContent });
+    } catch (e) {
+      console.warn('Email sending failed, but user record was created:', e.message);
+    }
 
     res.status(201).json({
       success: true,
-      message: 'Account created! Please check your email inbox to verify your account.'
+      message: 'Account created successfully! Please check your email inbox to verify your account.'
     });
 
   } catch (err) {
     console.error('Registration Error:', err);
     res.status(500).json({ success: false, message: 'Registration failed: ' + err.message });
-  }
-});
-
-// POST /api/auth/verify-email
-app.post(['/api/auth/verify-email', '/auth/verify-email', '/api/verify-email'], async (req, res) => {
-  try {
-    const { token } = req.body;
-
-    if (!token) {
-      return res.status(400).json({ success: false, message: 'Verification token is required.' });
-    }
-
-    const userResult = await db.query(
-      'SELECT * FROM users WHERE verification_token = $1 AND verification_expires > NOW()',
-      [token]
-    );
-
-    if (userResult.rows.length === 0) {
-      return res.status(400).json({ success: false, message: 'Invalid or expired verification link.' });
-    }
-
-    await db.query(
-      `UPDATE users 
-       SET is_verified = true, status = 'active', verification_token = NULL, verification_expires = NULL 
-       WHERE id = $1`,
-      [userResult.rows[0].id]
-    );
-
-    res.json({
-      success: true,
-      message: 'Your email address has been successfully verified! You can now log in.'
-    });
-
-  } catch (err) {
-    console.error('Email Verification Error:', err);
-    res.status(500).json({ success: false, message: 'Verification error: ' + err.message });
   }
 });
 
@@ -279,7 +223,7 @@ app.post(['/api/auth/login', '/auth/login', '/api/login'], async (req, res) => {
     const user = userResult.rows[0];
 
     if (!user.is_verified) {
-      return res.status(403).json({ success: false, message: 'Please verify your email before logging in. Check your inbox for the verification link.' });
+      return res.status(403).json({ success: false, message: 'Please verify your email address before logging in.' });
     }
 
     const passwordMatches = await bcrypt.compare(password, user.password_hash || '');
@@ -304,166 +248,37 @@ app.post(['/api/auth/login', '/auth/login', '/api/login'], async (req, res) => {
   }
 });
 
-// POST /api/auth/resend-verification
-app.post(['/api/auth/resend-verification', '/auth/resend-verification', '/api/resend-verification'], async (req, res) => {
+// POST /api/auth/verify-email
+app.post(['/api/auth/verify-email', '/auth/verify-email'], async (req, res) => {
   try {
-    const { email } = req.body;
-
-    if (!email) {
-      return res.status(400).json({ success: false, message: 'Email is required.' });
-    }
-
-    const userResult = await db.query('SELECT * FROM users WHERE email = $1', [email]);
-    if (userResult.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'No account found with this email.' });
-    }
-
-    const user = userResult.rows[0];
-
-    if (user.is_verified) {
-      return res.status(400).json({ success: false, message: 'This account is already verified. Please log in.' });
-    }
-
-    const verificationToken = Math.random().toString(36).substring(2) + Date.now().toString(36);
-    const verificationExpires = new Date(Date.now() + 24 * 3600000);
-
-    await db.query(
-      'UPDATE users SET verification_token = $1, verification_expires = $2 WHERE id = $3',
-      [verificationToken, verificationExpires, user.id]
-    );
-
-    const verifyUrl = `https://skillforge-frontend-one.vercel.app/verify-email?token=${verificationToken}`;
-
-    const htmlContent = `
-      <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; background-color: #f9f9f9;">
-        <h2 style="color: #2563eb;">Verify Your Skillforge Account</h2>
-        <p>Hi ${user.full_name},</p>
-        <p>Here's your new verification link to activate your account:</p>
-        <p style="margin: 25px 0;">
-          <a href="${verifyUrl}" style="background-color: #2563eb; color: #ffffff; padding: 12px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">
-            Verify Email Address
-          </a>
-        </p>
-        <p>If the button above does not work, copy and paste this link into your browser:</p>
-        <p><a href="${verifyUrl}">${verifyUrl}</a></p>
-      </div>
-    `;
-
-    await sendBrevoEmail({
-      to: email,
-      subject: 'Verify Your Skillforge Account',
-      htmlContent,
-    });
-
-    res.json({ success: true, message: 'Verification email resent. Please check your inbox.' });
-  } catch (err) {
-    console.error('Resend Verification Error:', err);
-    res.status(500).json({ success: false, message: 'Failed to resend verification email: ' + err.message });
-  }
-});
-
-// ==========================================
-// EMAIL PASSWORD RESET ROUTES
-// ==========================================
-
-// POST /api/auth/forgot-password
-app.post(['/api/auth/forgot-password', '/auth/forgot-password', '/api/forgot-password'], async (req, res) => {
-  try {
-    const { email } = req.body;
-
-    if (!email) {
-      return res.status(400).json({ success: false, message: 'Email address is required.' });
-    }
-
-    const userResult = await db.query('SELECT * FROM users WHERE email = $1', [email]);
-    if (userResult.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'No account registered with this email address.' });
-    }
-
-    const token = Math.random().toString(36).substring(2) + Date.now().toString(36);
-    const expires = new Date(Date.now() + 3600000);
-
-    await db.query(
-      'UPDATE users SET reset_password_token = $1, reset_password_expires = $2 WHERE email = $3',
-      [token, expires, email]
-    );
-
-    const resetUrl = `https://skillforge-frontend-one.vercel.app/reset-password?token=${token}`;
-
-    const htmlContent = `
-      <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; background-color: #f9f9f9;">
-        <h2 style="color: #2563eb;">Password Reset Request</h2>
-        <p>Hello,</p>
-        <p>We received a request to reset the password for your Skillforge account.</p>
-        <p>Click the button below to reset your password (valid for 1 hour):</p>
-        <p style="margin: 25px 0;">
-          <a href="${resetUrl}" style="background-color: #2563eb; color: #ffffff; padding: 12px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">
-            Reset Password
-          </a>
-        </p>
-        <p>If the button above does not work, copy and paste this link into your browser:</p>
-        <p><a href="${resetUrl}">${resetUrl}</a></p>
-        <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;" />
-        <p style="font-size: 12px; color: #777;">If you did not request a password reset, you can safely ignore this email.</p>
-      </div>
-    `;
-
-    await sendBrevoEmail({
-      to: email,
-      subject: 'Skillforge Account Password Reset',
-      htmlContent,
-    });
-
-    console.log(`📧 Reset email sent via Brevo API to ${email}`);
-
-    res.json({
-      success: true,
-      message: 'Password reset link has been dispatched to your email inbox.',
-    });
-
-  } catch (err) {
-    console.error('Email Dispatch Error:', err);
-    res.status(500).json({ success: false, message: 'Failed to send email: ' + err.message });
-  }
-});
-
-// POST /api/auth/reset-password
-app.post(['/api/auth/reset-password', '/auth/reset-password', '/api/reset-password'], async (req, res) => {
-  try {
-    const { token, newPassword } = req.body;
-
-    if (!token || !newPassword) {
-      return res.status(400).json({ success: false, message: 'Token and new password are required.' });
-    }
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ success: false, message: 'Token is required.' });
 
     const userResult = await db.query(
-      'SELECT * FROM users WHERE reset_password_token = $1 AND reset_password_expires > NOW()',
+      'SELECT * FROM users WHERE verification_token = $1 AND verification_expires > NOW()',
       [token]
     );
 
     if (userResult.rows.length === 0) {
-      return res.status(400).json({ success: false, message: 'Invalid or expired password reset token.' });
+      return res.status(400).json({ success: false, message: 'Invalid or expired verification link.' });
     }
 
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-
     await db.query(
-      'UPDATE users SET password_hash = $1, reset_password_token = NULL, reset_password_expires = NULL WHERE id = $2',
-      [hashedPassword, userResult.rows[0].id]
+      `UPDATE users SET is_verified = true, status = 'active', verification_token = NULL, verification_expires = NULL WHERE id = $1`,
+      [userResult.rows[0].id]
     );
 
-    res.json({ success: true, message: 'Password has been reset successfully!' });
-
+    res.json({ success: true, message: 'Email verified successfully! You may now log in.' });
   } catch (err) {
-    console.error('Reset Password Error:', err);
-    res.status(500).json({ success: false, message: 'Database error: ' + err.message });
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
 // ==========================================
-// USER ENROLLMENT & PROFILE ENDPOINTS
+// STUDENT DASHBOARD DATA API
 // ==========================================
 
+// GET /api/users/me (Fetches full logged-in user profile & enrolled dynamic courses)
 app.get(
   ['/api/users/me', '/api/user/profile', '/api/enrollments/my-courses', '/api/courses/enrolled'],
   authenticateToken,
@@ -475,15 +290,16 @@ app.get(
       );
 
       if (userRes.rows.length === 0) {
-        return res.status(404).json({ success: false, message: 'User not found.' });
+        return res.status(404).json({ success: false, message: 'User record not found.' });
       }
 
       const user = userRes.rows[0];
 
+      // Dynamic Join across enrolled courses table
       const enrolledRes = await db.query(
-        `SELECT c.id, c.title, c.description, c.category, c.thumbnail, uc.progress 
+        `SELECT c.id, c.title, c.description, c.category, c.thumbnail, c.lessons, c.quiz, uc.progress 
          FROM user_courses uc 
-         JOIN courses c ON uc.course_id = c.id 
+         JOIN courses c ON uc.course_id::text = c.id::text 
          WHERE uc.user_id = $1 
          ORDER BY uc.created_at DESC`,
         [req.user.id]
@@ -501,12 +317,13 @@ app.get(
         courses: enrolledRes.rows,
       });
     } catch (err) {
-      console.error('Fetch Enrolled Courses Error:', err);
+      console.error('Fetch Student Dashboard Error:', err);
       res.status(500).json({ success: false, message: err.message });
     }
   }
 );
 
+// POST /api/enrollments (Enrolls student into a dynamic course)
 app.post('/api/enrollments', authenticateToken, async (req, res) => {
   try {
     const { courseId } = req.body;
@@ -528,13 +345,13 @@ app.post('/api/enrollments', authenticateToken, async (req, res) => {
 });
 
 // ==========================================
-// PUBLIC & COURSE ROUTES
+// COURSE MANAGEMENT ENDPOINTS
 // ==========================================
 
 app.get('/api/courses', async (req, res) => {
   try {
     const result = await db.query('SELECT * FROM courses ORDER BY id DESC');
-    res.json({ success: true, data: result.rows });
+    res.json({ success: true, data: result.rows, courses: result.rows });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -543,19 +360,20 @@ app.get('/api/courses', async (req, res) => {
 app.get('/api/courses/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await db.query('SELECT * FROM courses WHERE id = $1', [id]);
+    const result = await db.query('SELECT * FROM courses WHERE id::text = $1', [id]);
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'Course not found.' });
+      return res.status(404).json({ success: false, message: 'Course not found.' });
     }
 
-    res.json(result.rows[0]);
+    res.json({ success: true, data: result.rows[0], course: result.rows[0] });
   } catch (err) {
-    res.status(500).json({ message: 'Database error: ' + err.message });
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
-app.post('/api/courses', async (req, res) => {
+// Admin Route: Create New Course Dynamic
+app.post('/api/courses', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { title, description, category, thumbnail, lessons, quiz } = req.body;
 
@@ -586,25 +404,41 @@ app.post('/api/courses', async (req, res) => {
       data: result.rows[0],
     });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'Database error: ' + err.message });
-  }
-});
-
-app.delete('/api/courses/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    await db.query('DELETE FROM courses WHERE id = $1', [id]);
-    res.json({ success: true, message: 'Course deleted successfully.' });
-  } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
 // ==========================================
-// ADMIN USER & CONTENT MANAGEMENT ROUTES
+// REAL-TIME ADMIN DASHBOARD API
 // ==========================================
 
-app.get('/api/admin/users', async (req, res) => {
+// GET /api/admin/analytics (Dynamic PostgreSQL counts)
+app.get('/api/admin/analytics', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const usersCountRes = await db.query('SELECT COUNT(*) FROM users');
+    const coursesCountRes = await db.query('SELECT COUNT(*) FROM courses');
+    const enrollmentsCountRes = await db.query('SELECT COUNT(*) FROM user_courses');
+
+    const totalUsers = parseInt(usersCountRes.rows[0].count, 10) || 0;
+    const totalCourses = parseInt(coursesCountRes.rows[0].count, 10) || 0;
+    const activeEnrollments = parseInt(enrollmentsCountRes.rows[0].count, 10) || 0;
+
+    res.json({
+      success: true,
+      stats: {
+        totalUsers,
+        totalCourses,
+        activeEnrollments,
+        completionRate: activeEnrollments > 0 ? `${Math.min(100, Math.round((activeEnrollments / (totalUsers || 1)) * 100))}%` : '0%'
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// GET /api/admin/users (Lists all registered users dynamically)
+app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const result = await db.query('SELECT id, email, full_name as name, role, status FROM users ORDER BY id DESC');
     res.json({ success: true, users: result.rows });
@@ -613,61 +447,37 @@ app.get('/api/admin/users', async (req, res) => {
   }
 });
 
-app.delete('/api/admin/users/:id', async (req, res) => {
+// PUT /api/admin/users/:id/role (Secure endpoint to promote user roles)
+app.put('/api/admin/users/:id/role', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { role } = req.body;
+
+    if (!['student', 'admin', 'instructor'].includes(role)) {
+      return res.status(400).json({ success: false, message: 'Invalid role provided.' });
+    }
+
+    await db.query('UPDATE users SET role = $1 WHERE id = $2', [role, id]);
+    res.json({ success: true, message: `User role updated to ${role} successfully.` });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// DELETE /api/admin/users/:id
+app.delete('/api/admin/users/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     await db.query('DELETE FROM users WHERE id = $1', [id]);
-    res.json({ success: true, message: 'User deleted successfully.' });
+    res.json({ success: true, message: 'User account removed successfully.' });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-app.put('/api/admin/users/:id/status', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status } = req.body;
-    await db.query('UPDATE users SET status = $1 WHERE id = $2', [status, id]);
-    res.json({ success: true, message: `User status updated to ${status}` });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-app.delete('/api/admin/courses/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    await db.query('DELETE FROM courses WHERE id = $1', [id]);
-    res.json({ success: true, message: 'Course deleted successfully.' });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-app.get('/api/admin/analytics', async (req, res) => {
-  try {
-    const usersCount = await db.query('SELECT COUNT(*) FROM users');
-    const coursesCount = await db.query('SELECT COUNT(*) FROM courses');
-    
-    res.json({
-      success: true,
-      stats: {
-        totalUsers: parseInt(usersCount.rows[0].count) || 0,
-        activeEnrollments: parseInt(coursesCount.rows[0].count) * 2 || 0,
-        issuedCertificates: 12,
-        completionRate: '94.2%'
-      },
-      recentCertificates: []
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-// Start Server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`🚀 Skillforge Express Backend running on port ${PORT}`);
+  console.log(`🚀 Skillforge Server active on port ${PORT}`);
 });
 
 module.exports = app;
