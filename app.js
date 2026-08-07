@@ -45,7 +45,7 @@ async function sendBrevoEmail({ to, subject, htmlContent }) {
 }
 
 // ==========================================
-// AUTOMATIC DATABASE MIGRATION
+// AUTOMATIC DATABASE MIGRATION & ADMIN SEEDING
 // ==========================================
 async function initDb() {
   try {
@@ -84,7 +84,36 @@ async function initDb() {
   }
 }
 
-initDb();
+async function seedAdminUser() {
+  try {
+    const adminEmail = 'dicksonprince.wycliff@gmail.com';
+    const defaultPassword = 'AdminPassword123!';
+
+    const existingUser = await db.query('SELECT * FROM users WHERE email = $1', [adminEmail]);
+
+    if (existingUser.rows.length === 0) {
+      const hashedPassword = await bcrypt.hash(defaultPassword, 10);
+      await db.query(
+        `INSERT INTO users (full_name, email, password_hash, role, is_verified, status) 
+         VALUES ($1, $2, $3, 'admin', true, 'active')`,
+        ['Prince Dickson', adminEmail, hashedPassword]
+      );
+      console.log(`✅ Admin account created for ${adminEmail}`);
+    } else {
+      await db.query(
+        `UPDATE users SET role = 'admin', is_verified = true, status = 'active' WHERE email = $1`,
+        [adminEmail]
+      );
+      console.log(`✅ Account ${adminEmail} successfully set to Admin.`);
+    }
+  } catch (err) {
+    console.error('⚠️ Admin seeding error:', err.message);
+  }
+}
+
+initDb().then(() => {
+  seedAdminUser();
+});
 
 // ==========================================
 // DYNAMIC CORS CONFIGURATION
